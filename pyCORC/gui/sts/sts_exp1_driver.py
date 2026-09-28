@@ -7,9 +7,11 @@ var_num = 6
 exp_id = "exp1"
 
 subject_id = input("subject id?: sub<>: ")
-patient_id = input("patient id?: p<>: ")
+chair_height = input("chair height?: ")
+foot_position = input("foot position?: ")
+momentum_condition = input("momentum condition?: ")
 
-print(f"Starting {exp_id} - {patient_id} - {subject_id}")
+print(f"Starting {exp_id} - {subject_id}")
 
 for var in range(var_num):
     # var = 5
@@ -25,22 +27,30 @@ for var in range(var_num):
         break
     print("========================================================\n")
     argv ={
-           "init_flags":{"corc":{"on":True,
+           "init_flags":{"corc":{"on":False,
                                  "ip":"127.0.0.1",
                                  "port":2048},
                         "xsens":{"on":True,
                                  "ip":"0.0.0.0",
                                  "port":9764},
+                        "forceplate":{"on":True,
+                                 "ip":"127.0.0.1",
+                                 "port":2048,
+                                 "num_plates":2},
                          "gui":{"on":True,
                                 "freq":30,
-                                "3d":True,
-                                "force":False},
+                                "3d":False,
+                                "vel":True},
                          "log":{"on":True}
                          },
             "session_data":{
                 "exp_id": exp_id,
                 "subject_id":subject_id,
-                "take_num":0,}
+                "take_num":0,
+                "var_num":var+1,
+                "chair_height":chair_height,
+                "foot_position":foot_position,
+                "momentum_condition":momentum_condition,}
            }
 
     argv = json.dumps(argv)

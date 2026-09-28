@@ -17,21 +17,19 @@ def parse_string(message:bytes):
 def parse_COM_kinematics(message:bytes):
     COM_kinematics = np.frombuffer(message, dtype='>f4').tolist()    
     return COM_kinematics
-def parse_UL_joint_angle(message: bytes):
+def parse_LL_joint_angle(message: bytes):
     # Compute starting offsets for each joint
-    JOINT_RIGHT_T4_SHOULDER = 6
-    JOINT_RIGHT_SHOULDER = 7
-    JOINT_RIGHT_ELBOW = 8
-    JOINT_RIGHT_WRIST = 9
-    JOINT_LEFT_T4_SHOULDER = 10
-    JOINT_LEFT_SHOULDER = 11
-    JOINT_LEFT_ELBOW = 12
-    JOINT_LEFT_WRIST = 13
-    JOINT_TRUNK_A = 25
-    JOINT_TRUNK_B = 27
+    JOINT_RIGHT_HIP = 14
+    JOINT_RIGHT_KNEE = 15
+    JOINT_RIGHT_ANKLE = 16
+    JOINT_LEFT_HIP = 18
+    JOINT_LEFT_KNEE = 19
+    JOINT_LEFT_ANKLE = 20
+    JOINT_TRUNK_A = 25      #pelvis to T8
+    JOINT_TRUNK_B = 27      #vertical to T8
 
-    joints_list = [JOINT_RIGHT_T4_SHOULDER,JOINT_RIGHT_SHOULDER,JOINT_RIGHT_ELBOW,JOINT_RIGHT_WRIST,
-                    JOINT_LEFT_T4_SHOULDER,JOINT_LEFT_SHOULDER,JOINT_LEFT_ELBOW,JOINT_LEFT_WRIST,
+    joints_list = [JOINT_RIGHT_HIP,JOINT_RIGHT_KNEE,JOINT_RIGHT_ANKLE,
+                    JOINT_LEFT_HIP,JOINT_LEFT_KNEE,JOINT_LEFT_ANKLE,
                     JOINT_TRUNK_A, JOINT_TRUNK_B] # get the order from Analyze Pro
     packet_size = 20
     base_offsets = np.array(joints_list) * packet_size
@@ -41,49 +39,47 @@ def parse_UL_joint_angle(message: bytes):
     z_values = convert_4_bytes(message=message,base_offsets=base_offsets,add_offsets=16,dtype='>f4')
 
     # Convert to lists for compatibility
-    x_arr = x_values.tolist()
-    y_arr = y_values.tolist()
-    z_arr = z_values.tolist()
+    x_arr = x_values.tolist() #Abd/add  
+    y_arr = y_values.tolist() #int/ext
+    z_arr = z_values.tolist() #flex/ext
 
     # extract the joint angles
-    JOINT_RIGHT_T4_SHOULDER = 0
-    JOINT_RIGHT_SHOULDER = 1
-    JOINT_RIGHT_ELBOW = 2
-    JOINT_RIGHT_WRIST = 3
-    JOINT_LEFT_T4_SHOULDER = 4
-    JOINT_LEFT_SHOULDER = 5
-    JOINT_LEFT_ELBOW = 6
-    JOINT_LEFT_WRIST = 7
-    JOINT_TRUNK_A = 8
-    JOINT_TRUNK_B = 9
+    JOINT_RIGHT_HIP= 0
+    JOINT_RIGHT_KNEE = 1
+    JOINT_RIGHT_ANKLE = 2
+    JOINT_LEFT_HIP = 3
+    JOINT_LEFT_KNEE = 4
+    JOINT_LEFT_ANKLE = 5
+    JOINT_TRUNK_A = 6
+    JOINT_TRUNK_B = 7
 
     right_dict = {
         'trunk_ie':y_arr[JOINT_TRUNK_A],
         'trunk_aa':x_arr[JOINT_TRUNK_B],
         'trunk_fe':z_arr[JOINT_TRUNK_B],
-        'clav_dep_ev':z_arr[JOINT_RIGHT_T4_SHOULDER],
-        'clav_prot_ret':y_arr[JOINT_RIGHT_T4_SHOULDER],
-        'shoulder_fe':z_arr[JOINT_RIGHT_SHOULDER],
-        'shoulder_aa':x_arr[JOINT_RIGHT_SHOULDER],
-        'shoulder_ie':y_arr[JOINT_RIGHT_SHOULDER],
-        'elbow_fe':z_arr[JOINT_RIGHT_ELBOW],
-        'elbow_ps':y_arr[JOINT_RIGHT_ELBOW],
-        'wrist_fe':z_arr[JOINT_RIGHT_WRIST],
-        'wrist_dev':x_arr[JOINT_RIGHT_WRIST]
+        'hip_fe':z_arr[JOINT_RIGHT_HIP],
+        'hip_aa':x_arr[JOINT_RIGHT_HIP],
+        'hip_ie':y_arr[JOINT_RIGHT_HIP],
+        'knee_fe':z_arr[JOINT_RIGHT_KNEE],
+        'knee_aa':x_arr[JOINT_RIGHT_KNEE], # probably not useful
+        'knee_ie':y_arr[JOINT_RIGHT_KNEE],
+        'ankle_fe':z_arr[JOINT_RIGHT_ANKLE],
+        'ankle_aa':x_arr[JOINT_RIGHT_ANKLE],
+        'ankle_ie':y_arr[JOINT_RIGHT_ANKLE]       
     }
 
     left_dict = {
         'trunk_ie':y_arr[JOINT_TRUNK_A],
         'trunk_aa':x_arr[JOINT_TRUNK_B],
         'trunk_fe':z_arr[JOINT_TRUNK_B],
-        'clav_dep_ev':z_arr[JOINT_LEFT_T4_SHOULDER],
-        'clav_prot_ret':y_arr[JOINT_LEFT_T4_SHOULDER],
-        'shoulder_fe':z_arr[JOINT_LEFT_SHOULDER],
-        'shoulder_aa':x_arr[JOINT_LEFT_SHOULDER],
-        'shoulder_ie':y_arr[JOINT_LEFT_SHOULDER],
-        'elbow_fe':z_arr[JOINT_LEFT_ELBOW],
-        'elbow_ps':y_arr[JOINT_LEFT_ELBOW],
-        'wrist_fe':z_arr[JOINT_LEFT_WRIST],
-        'wrist_dev':x_arr[JOINT_LEFT_WRIST]
+        'hip_fe':z_arr[JOINT_LEFT_HIP],
+        'hip_aa':x_arr[JOINT_LEFT_HIP],
+        'hip_ie':y_arr[JOINT_LEFT_HIP],
+        'knee_fe':z_arr[JOINT_LEFT_KNEE],
+        'knee_aa':x_arr[JOINT_LEFT_KNEE],
+        'knee_ie':y_arr[JOINT_LEFT_KNEE],
+        'ankle_fe':z_arr[JOINT_LEFT_ANKLE],
+        'ankle_aa':x_arr[JOINT_LEFT_ANKLE],
+        'ankle_ie':y_arr[JOINT_LEFT_ANKLE]
     }
     return {"dict":right_dict,"list":list(right_dict.values())},{"dict":left_dict,"list":list(left_dict.values())}

@@ -18,6 +18,9 @@ from base.pycorc_gui import pycorc_gui
 print("Importing IOs")
 from pycorc_io.corc.corc_FLNL_client import corc_FLNL_client
 from pycorc_io.xsens.xsens_CoM_server import xsens_server
+from pycorc_io.forceplate.forceplate_client import forceplate_client  # NEW: forceplate TCP client
+print("Importing pyqtgraph")
+import pyqtgraph as pg
 print("Importing PySide6")
 from PySide6 import QtWidgets
 from PySide6.QtGui import QShortcut
@@ -31,17 +34,38 @@ class sts_gui(pycorc_gui):
         self.xsens_args = self.init_args["init_flags"]["xsens"]
         self.gui_args = self.init_args["init_flags"]["gui"]
         self.log_args = self.init_args["init_flags"]["log"]
+        self.fp_args = self.init_args["init_flags"].get("forceplate", {"on": False})  # NEW: forceplate config; default off if key absent
         self.session_data = self.init_args["session_data"]
 
         self.num_closed_threads = 0
         self.num_opened_threads = 0
-        self.requested_threads = 2
+        # NEW: count active threads dynamically so sensors_ready fires at the right time
+        self.requested_threads = sum([
+            self.corc_args["on"],
+            self.xsens_args["on"],
+            self.log_args["on"],
+            self.fp_args["on"],
+        ])
 
         super().__init__(freq=self.gui_args["freq"],gui_3d=self.gui_args["3d"])
-        
-        # initialize live stream
+
+        # gui_label now holds a consolidated multi-source FPS summary (see update_gui) instead
+        # of just the base class's single GUI-FPS/elapsed-time line - needs more room than the
+        # base class's default [200,50]. Resized here rather than touching pycorc_gui.py itself.
+        self.gui_label.setFixedSize(260, 130)
+
+      
+        self.meta_label = self.init_response_label(size=[300, 100])
+
+      
+        # initialize live streams
         if self.gui_args["vel"]:
             self.sts_vel_live_stream = self.init_live_stream(num_columns=3)
+          
+        if self.fp_args["on"]:
+            self.num_fp_plates = self.fp_args.get("num_plates", 2)  # must match forceplatemaster_params.yaml's plateIDs count (change here)
+            
+            
             
         """
         Initilization
@@ -67,7 +91,7 @@ class sts_gui(pycorc_gui):
     def init_xsens(self):
         # init response label
         self.xsens_label = self.init_response_label(size=[300,300])
-        # init corc thread and worker
+
         self.xsens_thread = QThread()
         self.xsens_worker = xsens_server(ip=self.xsens_args["ip"],port=self.xsens_args["port"])
         
@@ -80,6 +104,46 @@ class sts_gui(pycorc_gui):
         if self.gui_args["on"] and self.gui_args["3d"]:
             self.com_frame = self.init_frame(pos=np.array([[0,0,1]]),rot=SO3().R*0.1)
             
+    def init_forceplate(self):
+        # mirrors init_corc / init_xsens — creates thread, worker.
+        
+        self.fp_thread = QThread()
+        self.fp_worker = forceplate_client(
+            ip=self.fp_args["ip"],
+            port=self.fp_args["port"],
+        )
+        fp_row = QtWidgets.QHBoxLayout()
+        fp_row.setContentsMargins(0, 0, 0, 0)
+        fp_row.setSpacing(0)
+        self.fp_cop_plots = []
+        self.fp_force_texts = []
+        for i in range(self.num_fp_plates):
+            widget, cop_marker, force_text = self.init_cop_plot(i)
+            fp_row.addWidget(widget)
+            self.fp_cop_plots.append(cop_marker)
+            self.fp_force_texts.append(force_text)
+        self.main_layout.addLayout(fp_row)  # added last -> ends up at the bottom of the window
+
+    def init_cop_plot(self, plate_idx):
+        
+        widget = pg.PlotWidget()
+        widget.setMinimumSize(220, 220)  
+        widget.setBackground('w')
+        widget.setAspectLocked(True)
+        widget.hideAxis('left')    
+        widget.hideAxis('bottom')  
+        widget.setXRange(-1.1, 1.1, padding=0)  # small margin so the outline's own stroke width isn't clipped at the edge
+        widget.setYRange(-1.1, 1.1, padding=0)
+
+        widget.setTitle(f"Plate {plate_idx} CoP")
+        widget.getPlotItem().layout.setContentsMargins(0, 0, 0, 0)  # trim internal padding - tight layout
+        widget.plot([-1, 1, 1, -1, -1], [-1, -1, 1, 1, -1], pen=pg.mkPen('k', width=1))  # plate outline
+        cop_marker = widget.plot([0], [0], pen=None, symbol='x', symbolBrush='r', symbolPen='r', symbolSize=14)
+        force_text = pg.TextItem(text="F=0.0 N\nCoP=(0.0, 0.0)", color='k', anchor=(1, 0))  # anchor=top-right of text box
+        force_text.setPos(1.0, 1.0)  # plate's own top-right corner
+        widget.addItem(force_text)
+        return widget, cop_marker, force_text
+        return cop_marker
     def init_logger(self):
         # init response label
         self.logger_label = self.init_response_label(size=[600,300],fontsize=50)
@@ -93,7 +157,7 @@ class sts_gui(pycorc_gui):
             start_log = QShortcut("S", self)
             start_log.activated.connect(self.logger_worker.start_worker)
             # to stop logging and close everything
-            stop_log = QShortcut("enter", self)
+            stop_log = QShortcut("C", self)
             stop_log.activated.connect(self.logger_worker.reset_logger)
             # to redo previous take
             redo_log = QShortcut("R", self)
@@ -109,6 +173,8 @@ class sts_gui(pycorc_gui):
             self.init_corc()
         if self.xsens_args["on"]:
             self.init_xsens()
+        if self.fp_args["on"]:
+            self.init_forceplate()
         if self.log_args["on"]:
             self.init_logger()
             self.logger_response = {
@@ -148,14 +214,23 @@ class sts_gui(pycorc_gui):
             self.xsens_worker.stopped.connect(self.xsens_thread.exit)
             # connect thread finished to close app
             self.xsens_thread.finished.connect(self.close_app)
+        if self.fp_args["on"]:
+            self.fp_worker.moveToThread(self.fp_thread)
+            self.fp_worker.data_ready.connect(self.update_forceplate, type=Qt.ConnectionType.QueuedConnection)
+            self.fp_thread.started.connect(self.fp_worker.start_worker)
+            self.fp_thread.started.connect(self.add_opened_threads)
+            self.fp_worker.stopped.connect(self.fp_thread.exit)
+            self.fp_thread.finished.connect(self.close_app)
         if self.log_args["on"]:
             # move worker to thread
             self.logger_worker.moveToThread(self.logger_thread)
-            # connect corc and xsens to logger
+            # connect corc, xsens and forceplate to logger
             if self.corc_args["on"]:
                 self.corc_worker.data_ready.connect(self.logger_worker.update_corc,type=Qt.ConnectionType.QueuedConnection)
             if self.xsens_args["on"]:
                 self.xsens_worker.data_ready.connect(self.logger_worker.update_xsens,type=Qt.ConnectionType.QueuedConnection)
+            if self.fp_args["on"]:
+                self.fp_worker.data_ready.connect(self.logger_worker.update_forceplate, type=Qt.ConnectionType.QueuedConnection)
             # connect logger to sensor gui
             self.logger_worker.time_ready.connect(self.update_logger,type=Qt.ConnectionType.QueuedConnection)
             # connect thread start to add opened threads  
@@ -177,6 +252,9 @@ class sts_gui(pycorc_gui):
         if self.xsens_args["on"]:
             self.xsens_thread.start()
             self.xsens_thread.setPriority(QThread.Priority.TimeCriticalPriority)
+        if self.fp_args["on"]:
+            self.fp_thread.start()
+            self.fp_thread.setPriority(QThread.Priority.TimeCriticalPriority)
         if self.log_args["on"]:
             self.logger_thread.start()
             self.logger_thread.setPriority(QThread.Priority.TimeCriticalPriority)
@@ -190,6 +268,9 @@ class sts_gui(pycorc_gui):
     def update_xsens(self,xsens_response):
         self.xsens_response = xsens_response
     @Slot(dict)
+    def update_forceplate(self, fp_response):
+        self.fp_response = fp_response  
+    @Slot(dict)
     def update_logger(self,logger_response):
         self.logger_response = logger_response
 
@@ -198,21 +279,32 @@ class sts_gui(pycorc_gui):
     """
     def update_gui(self):
         super().update_gui()
+
+        # trial # tracks the logger's live take_num (increments on 'C') once logging is active;
+        # falls back to session_data's initial value before that
+        if hasattr(self, 'logger_response') and "take_num" in self.logger_response:
+            trial_num = self.logger_response["take_num"]
+        else:
+            trial_num = self.session_data.get("take_num", 0)
+        meta_txt = (f"Trial #: {trial_num}\n"
+                    f"Chair Height: {self.session_data.get('chair_height', '-')}\n"
+                    f"Foot Position: {self.session_data.get('foot_position', '-')}\n"
+                    f"Momentum: {self.session_data.get('momentum_condition', '-')}\n")
+        self.update_response_label(self.meta_label, meta_txt)
+
         if self.gui_args["on"]:
             # update live stream time buffer
             if self.gui_args["vel"]:
                 self.update_live_stream_buffer(live_stream=self.sts_vel_live_stream)
         if hasattr(self, 'corc_response'):
-            # update rft info
+            # update rft info (FPS shown once, consolidated, in gui_label below)
             corc_data = self.corc_response["raw_data"]
-            fps = self.corc_response["corc_fps"]
             txt = ""
-            self.update_response_label(self.corc_label,f"FPS:{fps}\nCORC Running Time:{corc_data[0]}s\n{txt}")
+            self.update_response_label(self.corc_label,f"CORC Running Time:{corc_data[0]}s\n{txt}")
 
         if hasattr(self, 'xsens_response'):
-            # update rft info
+            # update rft info (FPS shown once, consolidated, in gui_label below)
             timecode = self.xsens_response["timecode"]
-            fps = self.xsens_response["xsens_fps"]
             right_list = self.xsens_response["right"]["list"]
             left_list = self.xsens_response["left"]["list"]             
             
@@ -234,18 +326,37 @@ class sts_gui(pycorc_gui):
             txt = f"XSENS Timecode:{timecode}\n"
 
             for i,key in  enumerate(['trunk_ie','trunk_aa','trunk_fe',
-                        'clav_dep_ev','clav_prot_ret',
-                        'shoulder_fe','shoulder_aa','shoulder_ie',
-                        'elbow_fe','elbow_ps','wrist_fe','wrist_dev']):
+                        'hip_fe','hip_aa','hip_ie',
+                        'knee_fe','knee_aa', 'knee_ie',
+                        'ankle_fe','ankle_aa','ankle_ie']):
                 txt += f"{key:15}: {left_list[i]:8.4f} {right_list[i]:8.4f}\n"
             txt += f"CoM Position\t: {CoM[0:3]}\n"
             txt += f"CoM Velocity\t: {CoM[3:6]}\n"
-            self.update_response_label(self.xsens_label,f"FPS:{fps}\n{txt}")
+            self.update_response_label(self.xsens_label,f"{txt}")
 
+        if hasattr(self, 'fp_response'):
+            # update each plate's CoP marker + its own overlaid force reading
+            # (no separate text label - see init_forceplate())
+            summed_forces = self.fp_response["summed_forces"]
+            cops = self.fp_response["cops"]
+            for i, (f, cop) in enumerate(zip(summed_forces, cops)):
+                self.fp_cop_plots[i].setData([cop[0]], [cop[1]])
+                self.fp_force_texts[i].setText(f"F={f:.1f} N\nCoP=({cop[0]:.3f}, {cop[1]:.3f})")
         if hasattr(self, 'logger_response'):
             print_text = self.logger_response["print_text"]
-            fps = self.logger_response["logger_fps"]
             self.update_response_label(self.logger_label,f"{print_text}")
+
+        # replacing the base class's own single-source gui_label text written by super().update_gui() above
+        fps_txt = f"GUI FPS: {self.gui_fps:.1f}   Elapsed: {self.gui_elapsed_time:.2f}s\n"
+        if hasattr(self, 'corc_response'):
+            fps_txt += f"CORC FPS: {self.corc_response['corc_fps']:.1f}\n"
+        if hasattr(self, 'xsens_response'):
+            fps_txt += f"Xsens FPS: {self.xsens_response['xsens_fps']:.1f}\n"
+        if hasattr(self, 'fp_response'):
+            fps_txt += f"ForcePlate FPS: {self.fp_response['fp_fps']:.1f}\n"
+        if hasattr(self, 'logger_response'):
+            fps_txt += f"Logger FPS: {self.logger_response['logger_fps']:.1f}\n"
+        self.update_response_label(self.gui_label, fps_txt)
     
     """
     Cleanup
@@ -257,6 +368,8 @@ class sts_gui(pycorc_gui):
             self.close_worker_thread(self.corc_worker)
         if hasattr(self, 'xsens_response'):
             self.close_worker_thread(self.xsens_worker)
+        if hasattr(self, 'fp_response'):
+            self.close_worker_thread(self.fp_worker)  # NEW: stop forceplate thread on quit
         if hasattr(self, 'logger_response'):
             self.close_worker_thread(self.logger_worker)
     @Slot()
@@ -281,9 +394,13 @@ if __name__ == "__main__":
                             "xsens":{"on":True,
                                      "ip":"0.0.0.0",
                                      "port":9764},
+                             "forceplate":{"on":True,
+                                           "ip":"127.0.0.1",
+                                           "port":2048,
+                                           "num_plates":2},
                              "gui":{"on":True,
                                     "freq":30,
-                                    "3d":True,
+                                    "3d":False,
                                     "vel":True},
                              "log":{"on":True}
                              },
@@ -291,6 +408,10 @@ if __name__ == "__main__":
                     "exp_id":"exp2",
                     "subject_id":"test2",
                     "take_num":0,
+                    "var_num":1,
+                    "chair_height":"test",
+                    "foot_position":"test",
+                    "momentum_condition":"test",
                 }
                }
         

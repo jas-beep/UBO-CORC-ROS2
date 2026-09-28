@@ -20,29 +20,29 @@ joint_keys = [
     'trunk_ie',
     'trunk_aa',
     'trunk_fe',
-    'clav_dep_ev',
-    'clav_prot_ret',
-    'shoulder_fe',
-    'shoulder_aa',
-    'shoulder_ie',
-    'elbow_fe',
-    'elbow_ps',
-    'wrist_fe',
-    'wrist_dev'
+    'hip_fe',
+    'hip_aa',
+    'hip_ie',
+    'knee_fe',
+    'knee_aa',
+    'knee_ie',
+    'ankle_fe',
+    'ankle_aa',
+    'ankle_ie'
 ]
 place_holder_angles = {
     'trunk_ie':0,
     'trunk_aa':0,
     'trunk_fe':0,
-    'clav_dep_ev':0,
-    'clav_prot_ret':0,
-    'shoulder_fe':90,
-    'shoulder_aa':0,
-    'shoulder_ie':90,
-    'elbow_fe':0,
-    'elbow_ps':90,
-    'wrist_fe':0,
-    'wrist_dev':0
+    'hip_fe':0,
+    'hip_aa':0,
+    'hip_ie':0,
+    'knee_fe':0,
+    'knee_aa':0,
+    'knee_ie':0,
+    'ankle_fe':0,
+    'ankle_aa':0,
+    'ankle_ie':0
 }
 
 class xsens_server(QObject):
@@ -60,7 +60,6 @@ class xsens_server(QObject):
         self.xsens_fps = 0
         self.xsens_cur_time = self.xsens_timer.elapsed()
         self.xsens_last_time = self.xsens_timer.elapsed()
-
         self.right = {}
         self.left = {}
         self.CoM = []
@@ -113,7 +112,7 @@ class xsens_server(QObject):
             
             #joints identifier
             # timecode += f"{parse_string(raw_message[:6])}\n"
-            right,left = parse_UL_joint_angle(raw_message[24:584])
+            right,left = parse_LL_joint_angle(raw_message[24:584])
 
             self.right=right
             self.left=left
