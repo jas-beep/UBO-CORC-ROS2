@@ -23,9 +23,62 @@ print("Importing pyqtgraph")
 import pyqtgraph as pg
 print("Importing PySide6")
 from PySide6 import QtWidgets
-from PySide6.QtGui import QShortcut
-from PySide6.QtCore import QThread,Qt,QMetaObject,Slot
+from PySide6.QtGui import QShortcut, QPainter, QLinearGradient, QColor, QFont, QPen
+from PySide6.QtCore import QThread,Qt,QMetaObject,Slot,QRectF,QPointF
 from spatialmath import SO3, SE3
+
+class speed_bar(QtWidgets.QWidget):
+    """Horizontal bar that fills with CoM speed; colour runs green (low) -> yellow (medium) -> red (high)."""
+    def __init__(self, v_max=0.7, parent=None):
+        super().__init__(parent)
+        self.v_max = v_max                                                   # speed at which the bar is full (m/s)
+        self.colour_stops = [(0.2, "#2ecc40"), (0.35, "#ffdc00"), (0.6, "#ff4136")]
+        self.tick_lines = [0.2, 0.3, 0.4, 0.6]                               # zone boundaries
+        self.tick_labels = [(0.2, "Low"), (0.35, "Medium"), (0.6, "High")]
+        self.value = 0.0
+        self.setMinimumSize(400, 120)
+
+    def set_value(self, v):
+        self.value = abs(float(v))
+        self.update()  # schedule repaint
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        margin, label_h = 10, 30
+        bar = QRectF(margin, margin, self.width() - 2*margin, self.height() - 2*margin - label_h)
+        x_of = lambda v: bar.left() + bar.width() * min(v / self.v_max, 1.0)
+
+        # empty track
+        p.setPen(Qt.NoPen)
+        p.setBrush(QColor("#dddddd"))
+        p.drawRect(bar)
+
+        # gradient spans the full track, only the filled part is drawn -> colour reflects absolute speed
+        grad = QLinearGradient(bar.left(), 0, bar.right(), 0)
+        for v, c in self.colour_stops:
+            grad.setColorAt(v / self.v_max, QColor(c))
+        p.setBrush(grad)
+        p.drawRect(QRectF(bar.left(), bar.top(), x_of(self.value) - bar.left(), bar.height()))
+
+        # zone boundaries + labels
+        font = QFont(); font.setPointSize(12)
+        p.setFont(font)
+        p.setPen(QPen(Qt.black, 2, Qt.DashLine))
+        for v in self.tick_lines:
+            p.drawLine(QPointF(x_of(v), bar.top()), QPointF(x_of(v), bar.bottom()))
+        p.setPen(QPen(Qt.black))
+        for v, name in self.tick_labels:
+            p.drawText(QRectF(x_of(v) - 60, bar.bottom() + 4, 120, label_h), Qt.AlignHCenter | Qt.AlignTop, name)
+
+        # outline + numeric readout
+        p.setPen(QPen(Qt.black, 2))
+        p.setBrush(Qt.NoBrush)
+        p.drawRect(bar)
+        font.setPointSize(20); font.setBold(True)
+        p.setFont(font)
+        p.drawText(bar, Qt.AlignCenter, f"{self.value:.2f} m/s")
+        p.end()
 
 class sts_gui(pycorc_gui):
     def __init__(self,init_args):
@@ -58,9 +111,10 @@ class sts_gui(pycorc_gui):
         self.meta_label = self.init_response_label(size=[300, 100])
 
       
-        # initialize live streams
+        # initialize CoM speed bar
         if self.gui_args["vel"]:
-            self.sts_vel_live_stream = self.init_live_stream(num_columns=3)
+            self.com_speed_bar = speed_bar(v_max=0.7)
+            self.main_layout.addWidget(self.com_speed_bar)
           
         if self.fp_args["on"]:
             self.num_fp_plates = self.fp_args.get("num_plates", 2)  # must match forceplatemaster_params.yaml's plateIDs count (change here)
@@ -95,11 +149,6 @@ class sts_gui(pycorc_gui):
         self.xsens_thread = QThread()
         self.xsens_worker = xsens_server(ip=self.xsens_args["ip"],port=self.xsens_args["port"])
         
-        # initialize live stream plots
-        self.sts_vel_live_stream_plots = []
-        if self.gui_args["on"] and self.gui_args["vel"]:
-            self.sts_vel_live_stream_plots.append(self.add_live_stream_plot(live_stream=self.sts_vel_live_stream,sensor_name= f"CoM Vel",unit="m/s",dim=3))
-            
         # init CoM point and frame
         if self.gui_args["on"] and self.gui_args["3d"]:
             self.com_frame = self.init_frame(pos=np.array([[0,0,1]]),rot=SO3().R*0.1)
@@ -292,10 +341,6 @@ class sts_gui(pycorc_gui):
                     f"Momentum: {self.session_data.get('momentum_condition', '-')}\n")
         self.update_response_label(self.meta_label, meta_txt)
 
-        if self.gui_args["on"]:
-            # update live stream time buffer
-            if self.gui_args["vel"]:
-                self.update_live_stream_buffer(live_stream=self.sts_vel_live_stream)
         if hasattr(self, 'corc_response'):
             # update rft info (FPS shown once, consolidated, in gui_label below)
             corc_data = self.corc_response["raw_data"]
@@ -312,7 +357,7 @@ class sts_gui(pycorc_gui):
             CoM = self.xsens_response["CoM"]
             if self.gui_args["on"] and self.gui_args["vel"]:
                 try:
-                    self.update_live_stream_plot(self.sts_vel_live_stream,self.sts_vel_live_stream_plots[0],CoM[3:6],dim=3)
+                    self.com_speed_bar.set_value(CoM[3])  # dx
                 except:
                     print(CoM)
             

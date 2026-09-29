@@ -20,7 +20,7 @@ class sts_logger(QObject):
         self.momentum_condition = session_data.get("momentum_condition", "")   
         self.chair_height = session_data.get("chair_height", "")
         self.foot_position = session_data.get("foot_position", "")
-        self.subject_path = f"logs/pycorc_recordings/{self.exp_id}/{self.subject_id}/{self.momentum_condition}"
+        self.subject_path = f"logs/pycorc_recordings/{self.exp_id}/{self.subject_id}/{self.momentum_condition}_{self.chair_height}_{self.foot_position}"
         
         self.save_path = os.path.join(os.path.dirname(__file__), '../../..',f"{self.subject_path}/raw")
         
