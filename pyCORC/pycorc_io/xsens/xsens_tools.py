@@ -15,8 +15,25 @@ Parse Functions
 def parse_string(message:bytes):
     return message.decode('utf-8')
 def parse_COM_kinematics(message:bytes):
-    COM_kinematics = np.frombuffer(message, dtype='>f4').tolist()    
+    COM_kinematics = np.frombuffer(message, dtype='>f4').tolist()
     return COM_kinematics
+def parse_foot_pose(message: bytes):
+    # Pose data quaternion (type 02): 32 bytes per segment
+    # [segment ID, x, y, z, q1(re), q2(i), q3(j), q4(k)], absolute, Z-Up
+    SEGMENT_RIGHT_FOOT = 17
+    SEGMENT_LEFT_FOOT = 21
+
+    segments_list = [SEGMENT_RIGHT_FOOT, SEGMENT_LEFT_FOOT]
+    packet_size = 32
+    base_offsets = np.array(segments_list) * packet_size
+
+    # position (x,y,z) then quaternion (q1,q2,q3,q4)
+    values = [convert_4_bytes(message=message,base_offsets=base_offsets,add_offsets=4*i,dtype='>f4') for i in range(1,4)]
+    values = np.stack(values, axis=1) # rows: segment, cols: x,y,z,q1,q2,q3,q4
+
+    right_foot = values[0].tolist()
+    left_foot = values[1].tolist()
+    return right_foot, left_foot
 def parse_LL_joint_angle(message: bytes):
     # Compute starting offsets for each joint
     JOINT_RIGHT_HIP = 14

@@ -77,7 +77,10 @@ class sts_logger(QObject):
             right = self.xsens_response["right"]["list"]
             left = self.xsens_response["left"]["list"]
             CoM = self.xsens_response["CoM"][0:6]
-            self.xsens_arr.append([timecode]+right+left+CoM+[self.elapsed_time])
+            # relative x distance between CoM and foot (CoM x - foot x)
+            com_foot_x = [CoM[0]-self.xsens_response["right_foot"][0],
+                          CoM[0]-self.xsens_response["left_foot"][0]]
+            self.xsens_arr.append([timecode]+right+left+CoM+com_foot_x+[self.elapsed_time])
 
         if self.init_args.get("forceplate", {}).get("on", False) and hasattr(self, 'fp_response'):
             # log [fp_time, F_0..F_(n-1) (calibrated N per plate), CoPx_0,CoPy_0, ...] each tick
@@ -177,7 +180,7 @@ class sts_logger(QObject):
                       'hip_fe','hip_aa','hip_ie',
                       'knee_fe','knee_aa','knee_ie',
                       'ankle_fe','ankle_aa','ankle_ie']
-            xsens_column = ["timecode"]+[f"{joint}_{side}" for side in ["right","left"] for joint in joints]+["x","y","z","dx","dy","dz","elapsed_time"]
+            xsens_column = ["timecode"]+[f"{joint}_{side}" for side in ["right","left"] for joint in joints]+["x","y","z","dx","dy","dz","com_foot_x_right","com_foot_x_left","elapsed_time"]
             total_col += xsens_column
             total_arr.append(self.xsens_arr)
         if hasattr(self, 'fp_response'):

@@ -63,6 +63,8 @@ class xsens_server(QObject):
         self.right = {}
         self.left = {}
         self.CoM = []
+        self.right_foot = []
+        self.left_foot = []
         self.timecode = ""
 
     """
@@ -94,28 +96,36 @@ class xsens_server(QObject):
 
     def get_latest(self):
         try:
-            # joint angle 
+            # pose data quaternion (type 02), 23 segments, no props/fingers
+            pose = 24+23*32
+            # joint angle
             ja = 24+28*20
-            # center of mass 
+            # center of mass
             com = 24+3*12
             # timecode 24+16 (always the last 24+16)
             time_bytes = 24+16
-            raw_message = self.server_conn.recv(ja+time_bytes+com)
+            raw_message = self.server_conn.recv(pose+ja+com+time_bytes)
 
             #timecode
             # timecode = f"{parse_string(raw_message[-40:-40+6])}\n"
             timecode = f"{parse_string(raw_message[-12:])}\n"
-            
+
             #CoM data
-            # timecode += f"{parse_string(raw_message[584:584+6])}\n"
-            CoM =  parse_COM_kinematics(raw_message[584+24:584+24+36])
-            
+            # timecode += f"{parse_string(raw_message[pose+ja:pose+ja+6])}\n"
+            CoM =  parse_COM_kinematics(raw_message[pose+ja+24:pose+ja+com])
+
             #joints identifier
+            # timecode += f"{parse_string(raw_message[pose:pose+6])}\n"
+            right,left = parse_LL_joint_angle(raw_message[pose+24:pose+ja])
+
+            #foot pose identifier
             # timecode += f"{parse_string(raw_message[:6])}\n"
-            right,left = parse_LL_joint_angle(raw_message[24:584])
+            right_foot,left_foot = parse_foot_pose(raw_message[24:pose])
 
             self.right=right
             self.left=left
+            self.right_foot=right_foot
+            self.left_foot=left_foot
             self.CoM = CoM
             self.timecode = timecode
             self.Connected=True
@@ -126,6 +136,8 @@ class xsens_server(QObject):
             self.right={"dict":place_holder_angles,"list":list(place_holder_angles.values())}
             self.left={"dict":place_holder_angles,"list":list(place_holder_angles.values())}
             self.CoM = [0,0,0,0,0,0,0,0,0]
+            self.right_foot = [0,0,0,1,0,0,0]
+            self.left_foot = [0,0,0,1,0,0,0]
             self.timecode = "ERROR TIME"
 
 
@@ -145,7 +157,9 @@ class xsens_server(QObject):
                 "xsens_fps":self.xsens_fps,
                 "right":self.right,
                 "left":self.left,
-                "CoM":self.CoM
+                "CoM":self.CoM,
+                "right_foot":self.right_foot,
+                "left_foot":self.left_foot
             }
         else:
             data = {
@@ -153,7 +167,9 @@ class xsens_server(QObject):
                 "xsens_fps":self.xsens_fps,
                 "right":self.right,
                 "left":self.left,
-                "CoM":self.CoM
+                "CoM":self.CoM,
+                "right_foot":self.right_foot,
+                "left_foot":self.left_foot
             }
         self.data_ready.emit(data)
 
@@ -219,6 +235,8 @@ class MainWindow(QMainWindow):
             
             txt += f"CoM Position:\t {CoM[0:3]}\n"
             txt += f"CoM Velocity:\t {CoM[3:6]}\n"
+            txt += f"R Foot Position:\t {text['right_foot'][0:3]}\n"
+            txt += f"L Foot Position:\t {text['left_foot'][0:3]}\n"
             # print(right.keys(),left.keys())
             for key in joint_keys:
                 txt += f"{key:15}: {left[key]:8.4f} {right[key]:8.4f}\n"

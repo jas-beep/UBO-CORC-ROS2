@@ -145,6 +145,8 @@ class sts_gui(pycorc_gui):
     def init_xsens(self):
         # init response label
         self.xsens_label = self.init_response_label(size=[300,300])
+        # large readout of knee angle and CoM-foot x distance
+        self.knee_com_label = self.init_response_label(size=[650,150],fontsize=45)
 
         self.xsens_thread = QThread()
         self.xsens_worker = xsens_server(ip=self.xsens_args["ip"],port=self.xsens_args["port"])
@@ -378,6 +380,15 @@ class sts_gui(pycorc_gui):
             txt += f"CoM Position\t: {CoM[0:3]}\n"
             txt += f"CoM Velocity\t: {CoM[3:6]}\n"
             self.update_response_label(self.xsens_label,f"{txt}")
+
+            # large readout: knee flexion and CoM x - foot x (same as logged com_foot_x_*)
+            knee_right = self.xsens_response["right"]["dict"]["knee_fe"]
+            knee_left = self.xsens_response["left"]["dict"]["knee_fe"]
+            com_foot_x_right = CoM[0]-self.xsens_response["right_foot"][0]
+            com_foot_x_left = CoM[0]-self.xsens_response["left_foot"][0]
+            big_txt = f"Knee  L:{knee_left:6.1f} R:{knee_right:6.1f}\n"
+            big_txt += f"CoM-x L:{com_foot_x_left:6.2f} R:{com_foot_x_right:6.2f}\n"
+            self.update_response_label(self.knee_com_label,big_txt)
 
         if hasattr(self, 'fp_response'):
             # update each plate's CoP marker + its own overlaid force reading

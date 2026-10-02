@@ -3,6 +3,7 @@ import subprocess, sys, os,json
 
 SCRIPT = os.path.join(os.path.dirname(__file__), "sts_gui.py")
 
+#Remove?
 var_num = 6
 exp_id = "exp1"
 
