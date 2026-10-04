@@ -17,19 +17,19 @@ def parse_string(message:bytes):
 def parse_COM_kinematics(message:bytes):
     COM_kinematics = np.frombuffer(message, dtype='>f4').tolist()
     return COM_kinematics
-def parse_foot_pose(message: bytes):
-    # Pose data quaternion (type 02): 32 bytes per segment
-    # [segment ID, x, y, z, q1(re), q2(i), q3(j), q4(k)], absolute, Z-Up
+def parse_foot_kinematics(message: bytes):
+    # Linear segment kinematics (type 21): 40 bytes per segment
+    # [segment ID, x, y, z, vx, vy, vz, ax, ay, az], global, Z-Up
     SEGMENT_RIGHT_FOOT = 17
     SEGMENT_LEFT_FOOT = 21
 
     segments_list = [SEGMENT_RIGHT_FOOT, SEGMENT_LEFT_FOOT]
-    packet_size = 32
+    packet_size = 40
     base_offsets = np.array(segments_list) * packet_size
 
-    # position (x,y,z) then quaternion (q1,q2,q3,q4)
-    values = [convert_4_bytes(message=message,base_offsets=base_offsets,add_offsets=4*i,dtype='>f4') for i in range(1,4)]
-    values = np.stack(values, axis=1) # rows: segment, cols: x,y,z,q1,q2,q3,q4
+    # position (x,y,z), velocity (vx,vy,vz), acceleration (ax,ay,az)
+    values = [convert_4_bytes(message=message,base_offsets=base_offsets,add_offsets=4*i,dtype='>f4') for i in range(1,10)]
+    values = np.stack(values, axis=1) # rows: segment, cols: x,y,z,vx,vy,vz,ax,ay,az
 
     right_foot = values[0].tolist()
     left_foot = values[1].tolist()
@@ -42,12 +42,11 @@ def parse_LL_joint_angle(message: bytes):
     JOINT_LEFT_HIP = 18
     JOINT_LEFT_KNEE = 19
     JOINT_LEFT_ANKLE = 20
-    JOINT_TRUNK_A = 25      #pelvis to T8
     JOINT_TRUNK_B = 27      #vertical to T8
 
     joints_list = [JOINT_RIGHT_HIP,JOINT_RIGHT_KNEE,JOINT_RIGHT_ANKLE,
                     JOINT_LEFT_HIP,JOINT_LEFT_KNEE,JOINT_LEFT_ANKLE,
-                    JOINT_TRUNK_A, JOINT_TRUNK_B] # get the order from Analyze Pro
+                    JOINT_TRUNK_B] # get the order from Analyze Pro
     packet_size = 20
     base_offsets = np.array(joints_list) * packet_size
 
@@ -67,11 +66,10 @@ def parse_LL_joint_angle(message: bytes):
     JOINT_LEFT_HIP = 3
     JOINT_LEFT_KNEE = 4
     JOINT_LEFT_ANKLE = 5
-    JOINT_TRUNK_A = 6
-    JOINT_TRUNK_B = 7
+    JOINT_TRUNK_B = 6
 
     right_dict = {
-        'trunk_ie':y_arr[JOINT_TRUNK_A],
+        'trunk_ie':y_arr[JOINT_TRUNK_B],
         'trunk_aa':x_arr[JOINT_TRUNK_B],
         'trunk_fe':z_arr[JOINT_TRUNK_B],
         'hip_fe':z_arr[JOINT_RIGHT_HIP],
@@ -86,7 +84,7 @@ def parse_LL_joint_angle(message: bytes):
     }
 
     left_dict = {
-        'trunk_ie':y_arr[JOINT_TRUNK_A],
+        'trunk_ie':y_arr[JOINT_TRUNK_B],
         'trunk_aa':x_arr[JOINT_TRUNK_B],
         'trunk_fe':z_arr[JOINT_TRUNK_B],
         'hip_fe':z_arr[JOINT_LEFT_HIP],

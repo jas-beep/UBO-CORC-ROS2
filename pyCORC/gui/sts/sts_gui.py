@@ -450,7 +450,7 @@ if __name__ == "__main__":
                             "xsens":{"on":True,
                                      "ip":"0.0.0.0",
                                      "port":9764},
-                             "forceplate":{"on":True,
+                             "forceplate":{"on":False,
                                            "ip":"127.0.0.1",
                                            "port":2048,
                                            "num_plates":2},

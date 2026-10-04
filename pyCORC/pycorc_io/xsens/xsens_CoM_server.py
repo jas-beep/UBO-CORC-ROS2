@@ -85,7 +85,7 @@ class xsens_server(QObject):
             self.server_conn,addr = self.server_socket.accept()
             print('XSENS: Server connected!')
             self.Connected = True
-            self.sampling = 0
+            self.sampling = 10
             self.server_socket.setblocking(True)
         except Exception as e:
             print('XSENS: Connection failed! (', e, ')')
@@ -94,33 +94,39 @@ class xsens_server(QObject):
             self.sampling = 10
         return self.Connected
 
+    def recv_exact(self, n):
+        # TCP is a byte stream: recv(n) may return fewer than n bytes
+        buf = bytearray()
+        while len(buf) < n:
+            chunk = self.server_conn.recv(n - len(buf))
+            if not chunk:
+                raise ConnectionError("XSENS: stream closed by MVN")
+            buf.extend(chunk)
+        return bytes(buf)
+
+    def recv_datagram(self):
+        # 24-byte header: [0:6] ID string ("MXTPxx"), [22:24] payload size (big-endian)
+        header = self.recv_exact(24)
+        msg_type = header[:6]
+        if not msg_type.startswith(b"MXTP"):
+            raise ValueError(f"XSENS: stream out of sync (header ID {msg_type!r})")
+        payload_size = int.from_bytes(header[22:24], "big")
+        return msg_type[4:6], self.recv_exact(payload_size)
+
     def get_latest(self):
         try:
-            # pose data quaternion (type 02), 23 segments, no props/fingers
-            pose = 24+23*32
-            # joint angle
-            ja = 24+28*20
-            # center of mass
-            com = 24+3*12
-            # timecode 24+16 (always the last 24+16)
-            time_bytes = 24+16
-            raw_message = self.server_conn.recv(pose+ja+com+time_bytes)
+            # read datagrams until one full frame (joint angles 20, linear segment kinematics 21, CoM 24, timecode 25) is collected
+            needed = {b"20", b"21", b"24", b"25"}
+            frame = {}
+            while not needed.issubset(frame):
+                msg_type, payload = self.recv_datagram()
+                frame[msg_type] = payload
 
-            #timecode
-            # timecode = f"{parse_string(raw_message[-40:-40+6])}\n"
-            timecode = f"{parse_string(raw_message[-12:])}\n"
-
-            #CoM data
-            # timecode += f"{parse_string(raw_message[pose+ja:pose+ja+6])}\n"
-            CoM =  parse_COM_kinematics(raw_message[pose+ja+24:pose+ja+com])
-
-            #joints identifier
-            # timecode += f"{parse_string(raw_message[pose:pose+6])}\n"
-            right,left = parse_LL_joint_angle(raw_message[pose+24:pose+ja])
-
-            #foot pose identifier
-            # timecode += f"{parse_string(raw_message[:6])}\n"
-            right_foot,left_foot = parse_foot_pose(raw_message[24:pose])
+            # timecode string HH:MM:SS.mmm is the last 12 bytes of the payload
+            timecode = f"{frame[b'25'][-12:].decode('utf-8', errors='replace')}\n"
+            CoM = parse_COM_kinematics(frame[b"24"])
+            right,left = parse_LL_joint_angle(frame[b"20"])
+            right_foot,left_foot = parse_foot_kinematics(frame[b"21"])
 
             self.right=right
             self.left=left
@@ -136,8 +142,8 @@ class xsens_server(QObject):
             self.right={"dict":place_holder_angles,"list":list(place_holder_angles.values())}
             self.left={"dict":place_holder_angles,"list":list(place_holder_angles.values())}
             self.CoM = [0,0,0,0,0,0,0,0,0]
-            self.right_foot = [0,0,0,1,0,0,0]
-            self.left_foot = [0,0,0,1,0,0,0]
+            self.right_foot = [0,0,0,0,0,0,0,0,0]
+            self.left_foot = [0,0,0,0,0,0,0,0,0]
             self.timecode = "ERROR TIME"
 
 
