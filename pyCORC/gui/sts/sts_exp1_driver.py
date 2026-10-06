@@ -4,19 +4,19 @@ import subprocess, sys, os,json
 SCRIPT = os.path.join(os.path.dirname(__file__), "sts_gui.py")
 
 #Remove?
-var_num = 6
+var_num = 18
 exp_id = "exp1"
 
 subject_id = input("subject id?: sub<>: ")
-chair_height = input("chair height?: ")
-foot_position = input("foot position?: ")
-momentum_condition = input("momentum condition?: ")
 
 print(f"Starting {exp_id} - {subject_id}")
 
 for var in range(var_num):
     # var = 5
     print("========================================================\n")
+    chair_height = input("chair height?: ")
+    foot_position = input("foot position?: ")
+    momentum_condition = input("momentum condition?: ")
     go_on = input(f"Start var_{var+1}?: y/n: ")
     while (go_on != "y" and go_on != "n"):
         go_on = input("Continue?: Reenter y/n: ")
@@ -31,10 +31,10 @@ for var in range(var_num):
            "init_flags":{"corc":{"on":False,
                                  "ip":"127.0.0.1",
                                  "port":2048},
-                        "xsens":{"on":True,
+                        "xsens":{"on":False,
                                  "ip":"0.0.0.0",
                                  "port":9764},
-                        "forceplate":{"on":True,
+                        "forceplate":{"on":False,
                                  "ip":"127.0.0.1",
                                  "port":2048,
                                  "num_plates":2},

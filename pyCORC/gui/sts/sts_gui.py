@@ -189,7 +189,7 @@ class sts_gui(pycorc_gui):
         widget.setTitle(f"Plate {plate_idx} CoP")
         widget.getPlotItem().layout.setContentsMargins(0, 0, 0, 0)  # trim internal padding - tight layout
         widget.plot([-1, 1, 1, -1, -1], [-1, -1, 1, 1, -1], pen=pg.mkPen('k', width=1))  # plate outline
-        cop_marker = widget.plot([0], [0], pen=None, symbol='x', symbolBrush='r', symbolPen='r', symbolSize=14)
+        cop_marker = widget.plot([0], [0], pen=None, symbol='o', symbolBrush='r', symbolPen='r', symbolSize=14)
         force_text = pg.TextItem(text="F=0.0 N\nCoP=(0.0, 0.0)", color='k', anchor=(1, 0))  # anchor=top-right of text box
         force_text.setPos(1.0, 1.0)  # plate's own top-right corner
         widget.addItem(force_text)
@@ -381,13 +381,12 @@ class sts_gui(pycorc_gui):
             txt += f"CoM Velocity\t: {CoM[3:6]}\n"
             self.update_response_label(self.xsens_label,f"{txt}")
 
-            # large readout: knee flexion and CoM x - foot x (same as logged com_foot_x_*)
+            # large readout: knee flexion and 
             knee_right = self.xsens_response["right"]["dict"]["knee_fe"]
             knee_left = self.xsens_response["left"]["dict"]["knee_fe"]
-            com_foot_x_right = CoM[0]-self.xsens_response["right_foot"][0]
-            com_foot_x_left = CoM[0]-self.xsens_response["left_foot"][0]
+            com_2_vert = np.degrees(np.arctan2(CoM[0]/CoM[1]))
             big_txt = f"Knee  L:{knee_left:6.1f} R:{knee_right:6.1f}\n"
-            big_txt += f"CoM-x L:{com_foot_x_left:6.2f} R:{com_foot_x_right:6.2f}\n"
+            big_txt += f"com2vert:{com_2_vert:6.2f}\n"
             self.update_response_label(self.knee_com_label,big_txt)
 
         if hasattr(self, 'fp_response'):
@@ -450,7 +449,7 @@ if __name__ == "__main__":
                             "xsens":{"on":True,
                                      "ip":"0.0.0.0",
                                      "port":9764},
-                             "forceplate":{"on":False,
+                             "forceplate":{"on":True,
                                            "ip":"127.0.0.1",
                                            "port":2048,
                                            "num_plates":2},
