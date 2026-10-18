@@ -1,5 +1,6 @@
 print("Importing Paths")
 import os, sys,json
+from collections import deque
 for mod in [m for m in sys.modules if 'PyQt5' in m]:
     del sys.modules[mod]
     
@@ -102,13 +103,11 @@ class sts_gui(pycorc_gui):
 
         super().__init__(freq=self.gui_args["freq"],gui_3d=self.gui_args["3d"])
 
-        # gui_label now holds a consolidated multi-source FPS summary (see update_gui) instead
-        # of just the base class's single GUI-FPS/elapsed-time line - needs more room than the
-        # base class's default [200,50]. Resized here rather than touching pycorc_gui.py itself.
+       
         self.gui_label.setFixedSize(260, 130)
 
       
-        self.meta_label = self.init_response_label(size=[300, 100])
+        self.meta_label = self.init_response_label(size=[200, 100])
 
       
         # initialize CoM speed bar
@@ -117,7 +116,7 @@ class sts_gui(pycorc_gui):
             self.main_layout.addWidget(self.com_speed_bar)
           
         if self.fp_args["on"]:
-            self.num_fp_plates = self.fp_args.get("num_plates", 2)  # must match forceplatemaster_params.yaml's plateIDs count (change here)
+            self.num_fp_plates = self.fp_args.get("num_plates", 3)  # must match forceplatemaster_params.yaml's plateIDs count (change here)
             
             
             
@@ -146,7 +145,7 @@ class sts_gui(pycorc_gui):
         # init response label
         self.xsens_label = self.init_response_label(size=[300,300])
         # large readout of knee angle and CoM-foot x distance
-        self.knee_com_label = self.init_response_label(size=[650,150],fontsize=45)
+        self.knee_com_label = self.init_response_label(size=[320,300], fontsize=20)
 
         self.xsens_thread = QThread()
         self.xsens_worker = xsens_server(ip=self.xsens_args["ip"],port=self.xsens_args["port"])
@@ -166,13 +165,20 @@ class sts_gui(pycorc_gui):
         fp_row = QtWidgets.QHBoxLayout()
         fp_row.setContentsMargins(0, 0, 0, 0)
         fp_row.setSpacing(0)
+        self.fp_force_only_idx = 2  # third plate: force trace only, no CoP
         self.fp_cop_plots = []
         self.fp_force_texts = []
         for i in range(self.num_fp_plates):
-            widget, cop_marker, force_text = self.init_cop_plot(i)
+            if i == self.fp_force_only_idx:
+                widget, trace, buf = self.init_force_trace_plot(i)
+                self.fp_force_widget, self.fp_force_trace, self.fp_force_buf = widget, trace, buf
+                self.fp_cop_plots.append(None)   # keep list indices aligned with plate index
+                self.fp_force_texts.append(None)
+            else:
+                widget, cop_marker, force_text = self.init_cop_plot(i)
+                self.fp_cop_plots.append(cop_marker)
+                self.fp_force_texts.append(force_text)
             fp_row.addWidget(widget)
-            self.fp_cop_plots.append(cop_marker)
-            self.fp_force_texts.append(force_text)
         self.main_layout.addLayout(fp_row)  # added last -> ends up at the bottom of the window
 
     def init_cop_plot(self, plate_idx):
@@ -189,12 +195,31 @@ class sts_gui(pycorc_gui):
         widget.setTitle(f"Plate {plate_idx} CoP")
         widget.getPlotItem().layout.setContentsMargins(0, 0, 0, 0)  # trim internal padding - tight layout
         widget.plot([-1, 1, 1, -1, -1], [-1, -1, 1, 1, -1], pen=pg.mkPen('k', width=1))  # plate outline
-        cop_marker = widget.plot([0], [0], pen=None, symbol='o', symbolBrush='r', symbolPen='r', symbolSize=14)
+        cop_marker = widget.plot([0], [0], pen=None, symbol='o', symbolBrush='r', symbolPen='r', symbolSize=12)
         force_text = pg.TextItem(text="F=0.0 N\nCoP=(0.0, 0.0)", color='k', anchor=(1, 0))  # anchor=top-right of text box
         force_text.setPos(1.0, 1.0)  # plate's own top-right corner
         widget.addItem(force_text)
         return widget, cop_marker, force_text
         return cop_marker
+
+    def init_force_trace_plot(self, plate_idx, window_s=5.0, band_n=10.0):
+        # scrolling force-vs-time plot (used for the chair plate instead of a CoP plot)
+        widget = pg.PlotWidget()
+        widget.setMinimumSize(220, 220)  # same as init_cop_plot
+        widget.setBackground('w')
+        widget.setTitle(f"Plate {plate_idx} F=0.0 N")
+        widget.getPlotItem().layout.setContentsMargins(0, 0, 0, 0)
+        widget.setLabel('left', 'F (N)')
+        widget.setLabel('bottom', 't (s)')
+        # seat-off band: 0 N line with +-band_n shaded region
+        band = pg.LinearRegionItem(values=(-band_n, band_n), orientation='horizontal',
+                                   movable=False, brush=pg.mkBrush(46, 204, 64, 60), pen=pg.mkPen(None))
+        widget.addItem(band)
+        widget.addItem(pg.InfiniteLine(pos=0, angle=0, pen=pg.mkPen('g', width=2, style=Qt.DashLine)))
+        trace = widget.plot([], [], pen=pg.mkPen('b', width=2))
+        n = int(window_s * self.gui_args["freq"])  # number of GUI ticks kept in the scroll window
+        buf = {"t": deque(maxlen=n), "f": deque(maxlen=n)}
+        return widget, trace, buf
     def init_logger(self):
         # init response label
         self.logger_label = self.init_response_label(size=[600,300],fontsize=50)
@@ -381,12 +406,13 @@ class sts_gui(pycorc_gui):
             txt += f"CoM Velocity\t: {CoM[3:6]}\n"
             self.update_response_label(self.xsens_label,f"{txt}")
 
-            # large readout: knee flexion and 
+            # large readout: knee & ankle flexion and 
             knee_right = self.xsens_response["right"]["dict"]["knee_fe"]
             knee_left = self.xsens_response["left"]["dict"]["knee_fe"]
-            com_2_vert = np.degrees(np.arctan2(CoM[0]/CoM[1]))
+            ankle_right = self.xsens_response["right"]["dict"]["ankle_fe"]
+            ankle_left = self.xsens_response["left"]["dict"]["ankle_fe"]
             big_txt = f"Knee  L:{knee_left:6.1f} R:{knee_right:6.1f}\n"
-            big_txt += f"com2vert:{com_2_vert:6.2f}\n"
+            big_txt += f"Ankle L:{ankle_left:6.1f} R:{ankle_right:6.1f}\n"
             self.update_response_label(self.knee_com_label,big_txt)
 
         if hasattr(self, 'fp_response'):
@@ -395,8 +421,14 @@ class sts_gui(pycorc_gui):
             summed_forces = self.fp_response["summed_forces"]
             cops = self.fp_response["cops"]
             for i, (f, cop) in enumerate(zip(summed_forces, cops)):
-                self.fp_cop_plots[i].setData([cop[0]], [cop[1]])
-                self.fp_force_texts[i].setText(f"F={f:.1f} N\nCoP=({cop[0]:.3f}, {cop[1]:.3f})")
+                if i == self.fp_force_only_idx:
+                    self.fp_force_buf["t"].append(self.gui_elapsed_time)
+                    self.fp_force_buf["f"].append(f)
+                    self.fp_force_trace.setData(list(self.fp_force_buf["t"]), list(self.fp_force_buf["f"]))
+                    self.fp_force_widget.setTitle(f"Plate {i} F={f:.1f} N")
+                else:
+                    self.fp_cop_plots[i].setData([cop[0]], [cop[1]])
+                    self.fp_force_texts[i].setText(f"F={f:.1f} N\nCoP=({cop[0]:.3f}, {cop[1]:.3f})")
         if hasattr(self, 'logger_response'):
             print_text = self.logger_response["print_text"]
             self.update_response_label(self.logger_label,f"{print_text}")
@@ -452,7 +484,7 @@ if __name__ == "__main__":
                              "forceplate":{"on":True,
                                            "ip":"127.0.0.1",
                                            "port":2048,
-                                           "num_plates":2},
+                                           "num_plates":3},
                              "gui":{"on":True,
                                     "freq":30,
                                     "3d":False,
@@ -461,7 +493,7 @@ if __name__ == "__main__":
                              },
                 "session_data":{
                     "exp_id":"exp2",
-                    "subject_id":"test2",
+                    "subject_id":"test_j",
                     "take_num":0,
                     "var_num":1,
                     "chair_height":"test",

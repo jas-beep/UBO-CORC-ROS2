@@ -85,8 +85,13 @@ class sts_logger(QObject):
         if self.init_args.get("forceplate", {}).get("on", False) and hasattr(self, 'fp_response'):
             # log [fp_time, F_0..F_(n-1) (calibrated N per plate), CoPx_0,CoPy_0, ...] each tick
             fp = self.fp_response
-            cop_flat = [c for cop in fp["cops"] for c in cop]
-            self.fp_arr.append([fp["fp_time"]] + list(fp["summed_forces"]) + cop_flat)
+            n = self.init_args.get("forceplate", {}).get("num_plates", 2)
+            if len(fp["summed_forces"]) == n and len(fp["cops"]) == n:
+                cop_flat = [c for cop in fp["cops"] for c in cop]
+                self.fp_arr.append([fp["fp_time"]] + list(fp["summed_forces"]) + cop_flat)
+            else:
+                # no valid packet this tick (client emits empty lists): keep the row width fixed
+                self.fp_arr.append([np.nan]*(1+3*n))
                 
         # emit the signal
         data = {
