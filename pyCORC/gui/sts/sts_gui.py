@@ -25,7 +25,7 @@ import pyqtgraph as pg
 print("Importing PySide6")
 from PySide6 import QtWidgets
 from PySide6.QtGui import QShortcut, QPainter, QLinearGradient, QColor, QFont, QPen
-from PySide6.QtCore import QThread,Qt,QMetaObject,Slot,QRectF,QPointF
+from PySide6.QtCore import QThread,Qt,QMetaObject,Slot,Signal,QRectF,QPointF
 from spatialmath import SO3, SE3
 
 class speed_bar(QtWidgets.QWidget):
@@ -82,6 +82,7 @@ class speed_bar(QtWidgets.QWidget):
         p.end()
 
 class sts_gui(pycorc_gui):
+    save_take = Signal(dict)  # carries the trial info panel contents to the logger on 'C'
     def __init__(self,init_args):
         self.init_args = init_args
         self.corc_args = self.init_args["init_flags"]["corc"]
@@ -108,8 +109,8 @@ class sts_gui(pycorc_gui):
 
       
         self.meta_label = self.init_response_label(size=[200, 100])
+        self.init_trial_info_panel()
 
-      
         # initialize CoM speed bar
         if self.gui_args["vel"]:
             self.com_speed_bar = speed_bar(v_max=0.7)
@@ -220,6 +221,71 @@ class sts_gui(pycorc_gui):
         n = int(window_s * self.gui_args["freq"])  # number of GUI ticks kept in the scroll window
         buf = {"t": deque(maxlen=n), "f": deque(maxlen=n)}
         return widget, trace, buf
+    def init_trial_info_panel(self):
+        # per-trial inputs written to trials_metadata.csv when a take is saved ('C')
+        box = QtWidgets.QGroupBox("Trial Info")
+        form = QtWidgets.QFormLayout(box)
+
+        def spin(lo, hi, suffix, val=0.0):
+            s = QtWidgets.QDoubleSpinBox()
+            s.setRange(lo, hi)
+            s.setDecimals(1)
+            s.setSuffix(suffix)
+            s.setValue(val)
+            s.editingFinished.connect(self.return_focus)
+            return s
+
+        # forceplate cm shift for this run's foot position, prefilled from earlier runs of this subject
+        self.foot_position = self.session_data.get("foot_position", "")
+        fp_positions = self.load_fp_positions()
+        self.fp_pos_spin = spin(-100, 100, " cm", float(fp_positions.get(self.foot_position, 0)))
+
+        self.knee_left_spin = spin(-30, 180, " deg")
+        self.knee_right_spin = spin(-30, 180, " deg")
+        capture_btn = QtWidgets.QPushButton("Capture knee from Xsens (K)")
+        capture_btn.setFocusPolicy(Qt.NoFocus)
+        capture_btn.clicked.connect(self.capture_knee_angle)
+
+        self.notes_edit = QtWidgets.QLineEdit()
+        self.notes_edit.setPlaceholderText("Notes for this trial (Enter to finish)")
+        self.notes_edit.returnPressed.connect(self.return_focus)
+
+        form.addRow(f"FP position ({self.foot_position or '-'})", self.fp_pos_spin)
+        form.addRow("Initial knee L", self.knee_left_spin)
+        form.addRow("Initial knee R", self.knee_right_spin)
+        form.addRow(capture_btn)
+        form.addRow("Notes", self.notes_edit)
+        box.setFixedWidth(340)
+        self.labels_layout.addWidget(box)
+
+        # clicking empty window space takes focus off the input fields so S/C/R/Q work again
+        self.container.setFocusPolicy(Qt.ClickFocus)
+    def return_focus(self):
+        self.container.setFocus()
+    def load_fp_positions(self):
+        path = os.path.join(os.path.dirname(__file__), '../../..',
+                            f"logs/pycorc_recordings/{self.session_data['exp_id']}/{self.session_data['subject_id']}/fp_positions_cm.json")
+        try:
+            with open(path) as f:
+                return json.load(f)
+        except (OSError, ValueError):
+            return {}
+    def capture_knee_angle(self):
+        if not hasattr(self, 'xsens_response'):
+            print("No Xsens data yet - cannot capture knee angle")
+            return
+        self.knee_left_spin.setValue(self.xsens_response["left"]["dict"]["knee_fe"])
+        self.knee_right_spin.setValue(self.xsens_response["right"]["dict"]["knee_fe"])
+    def get_trial_info(self):
+        return {
+            "fp_position_cm": self.fp_pos_spin.value(),
+            "knee_init_left_deg": self.knee_left_spin.value(),
+            "knee_init_right_deg": self.knee_right_spin.value(),
+            "notes": self.notes_edit.text(),
+        }
+    def save_current_take(self):
+        self.save_take.emit(self.get_trial_info())
+        self.notes_edit.clear()  # notes are per-trial; fp position/knee carry over to the next take
     def init_logger(self):
         # init response label
         self.logger_label = self.init_response_label(size=[600,300],fontsize=50)
@@ -234,10 +300,12 @@ class sts_gui(pycorc_gui):
             start_log.activated.connect(self.logger_worker.start_worker)
             # to stop logging and close everything
             stop_log = QShortcut("C", self)
-            stop_log.activated.connect(self.logger_worker.reset_logger)
+            stop_log.activated.connect(self.save_current_take)
             # to redo previous take
             redo_log = QShortcut("R", self)
             redo_log.activated.connect(self.logger_worker.redo_take)
+        capture_knee = QShortcut("K", self)
+        capture_knee.activated.connect(self.capture_knee_angle)
         close = QShortcut("Q", self)
         close.activated.connect(self.gui_timer.stop)
         close.activated.connect(self.close_workers)
@@ -309,6 +377,8 @@ class sts_gui(pycorc_gui):
                 self.fp_worker.data_ready.connect(self.logger_worker.update_forceplate, type=Qt.ConnectionType.QueuedConnection)
             # connect logger to sensor gui
             self.logger_worker.time_ready.connect(self.update_logger,type=Qt.ConnectionType.QueuedConnection)
+            # save take ('C') with the trial info panel contents
+            self.save_take.connect(self.logger_worker.reset_logger,type=Qt.ConnectionType.QueuedConnection)
             # connect thread start to add opened threads  
             self.logger_thread.started.connect(self.add_opened_threads)
             # connect worker stop to stop thread at closeup

@@ -1,4 +1,5 @@
 import os
+import json
 import numpy as np
 import pandas as pd
 
@@ -40,19 +41,46 @@ class sts_logger(QObject):
         
         print("STS Logger Started")
         
-    def log_trial_metadata(self, take_text):
+    def log_trial_metadata(self, take_text, trial_info=None):
+        trial_info = trial_info or {}
         row = {
         "subject_id": self.subject_id,
         "momentum_condition": self.momentum_condition,
         "take": take_text,
         "chair_height": self.chair_height,
         "foot_position": self.foot_position,
+        "fp_position_cm": trial_info.get("fp_position_cm", ""),
+        "knee_init_left_deg": trial_info.get("knee_init_left_deg", ""),
+        "knee_init_right_deg": trial_info.get("knee_init_right_deg", ""),
         "classification": "",   # based on UI condtional check?
-        "notes": "",
+        "notes": trial_info.get("notes", ""),
         }
         df = pd.DataFrame([row])
-        write_header = not os.path.isfile(self.metadata_path)
-        df.to_csv(self.metadata_path, mode='a', header=write_header, index=False)
+        os.makedirs(os.path.dirname(self.metadata_path), exist_ok=True)
+        if "fp_position_cm" in trial_info:
+            self.save_fp_position(trial_info["fp_position_cm"])
+        if os.path.isfile(self.metadata_path):
+            existing = pd.read_csv(self.metadata_path, nrows=0)
+            if list(existing.columns) != list(df.columns):
+                # older file with a different header: merge so columns stay aligned
+                old = pd.read_csv(self.metadata_path)
+                pd.concat([old, df], ignore_index=True).to_csv(self.metadata_path, index=False)
+                return
+            df.to_csv(self.metadata_path, mode='a', header=False, index=False)
+        else:
+            df.to_csv(self.metadata_path, index=False)
+
+    def save_fp_position(self, fp_position_cm):
+        # per-subject {foot_position: cm shift} so Natural/Back/Forward each keep their own value
+        path = os.path.join(os.path.dirname(self.metadata_path), "fp_positions_cm.json")
+        try:
+            with open(path) as f:
+                positions = json.load(f)
+        except (OSError, ValueError):
+            positions = {}
+        positions[self.foot_position] = fp_position_cm
+        with open(path, "w") as f:
+            json.dump(positions, f, indent=2)
 
     """
     Logging Callback
@@ -110,7 +138,7 @@ class sts_logger(QObject):
             self.poll_timer = QTimer()
             self.poll_timer.setTimerType(Qt.PreciseTimer)
             self.poll_timer.timeout.connect(self.log_current_data)
-            self.poll_timer.start(int(1/100*1000))
+            self.poll_timer.start(int(1/60*1000))
             self.logger_start_time = self.logger_timer.elapsed()
     
             if self.init_args["corc"]["on"]:
@@ -165,8 +193,8 @@ class sts_logger(QObject):
         self.take_num -= 1
         self.take_text = f"{self.take_num}"
         print(f"Redo {self.subject_id} Take {self.take_text}")
-    @Slot()
-    def reset_logger(self):
+    @Slot(dict)
+    def reset_logger(self, trial_info=None):
         print(f"\nTake {self.take_text} Elapsed Time: {self.elapsed_time}")
         
         total_arr = []
@@ -198,7 +226,7 @@ class sts_logger(QObject):
 
         df = pd.DataFrame(np.hstack(total_arr), columns=total_col)
         self.save_file(path=f"{self.save_path}/", df=df, item=f"STSRecord{self.take_text}Log")
-        self.log_trial_metadata(self.take_text)  # NEW: record this successfully-saved take in the sidecar
+        self.log_trial_metadata(self.take_text, trial_info)  # record this take + trial info panel in the sidecar
 
         # reset everything
         if self.init_args["corc"]["on"]:
