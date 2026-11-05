@@ -3,20 +3,29 @@ import subprocess, sys, os,json
 
 SCRIPT = os.path.join(os.path.dirname(__file__), "sts_gui.py")
 
-#Remove?
-var_num = 18
 exp_id = "exp1"
+
+# Fixed condition order: chair height -> foot position -> momentum
+CHAIR_HEIGHTS = ["KneeH", "Low"]
+FOOT_POSITIONS = ["Normal", "Back", "Forward"]
+MOMENTUM_CONDITIONS = ["N", "QS", "MT"]
+CONDITIONS = [(ch, fp, mc) for ch in CHAIR_HEIGHTS for fp in FOOT_POSITIONS for mc in MOMENTUM_CONDITIONS]
+var_num = len(CONDITIONS)
 
 subject_id = input("subject id?: sub<>: ")
 
 print(f"Starting {exp_id} - {subject_id}")
+print("\nTrial order:")
+for i, (ch, fp, mc) in enumerate(CONDITIONS):
+    print(f"  var_{i+1:<2}  {ch:<6} {fp:<8} {mc}")
 
-for var in range(var_num):
-    # var = 5
+start_var = input(f"\nStart from var? (1-{var_num}, enter for 1): ").strip()
+start_var = int(start_var) if start_var.isdigit() and 1 <= int(start_var) <= var_num else 1
+
+for var in range(start_var - 1, var_num):
     print("========================================================\n")
-    chair_height = input("chair height?: ")
-    foot_position = input("foot position?: ")
-    momentum_condition = input("momentum condition?: ")
+    chair_height, foot_position, momentum_condition = CONDITIONS[var]
+    print(f"var_{var+1}: chair height = {chair_height}, foot position = {foot_position}, momentum = {momentum_condition}")
     go_on = input(f"Start var_{var+1}?: y/n: ")
     while (go_on != "y" and go_on != "n"):
         go_on = input("Continue?: Reenter y/n: ")

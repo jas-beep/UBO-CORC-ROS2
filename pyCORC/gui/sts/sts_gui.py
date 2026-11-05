@@ -221,6 +221,7 @@ class sts_gui(pycorc_gui):
         n = int(window_s * self.gui_args["freq"])  # number of GUI ticks kept in the scroll window
         buf = {"t": deque(maxlen=n), "f": deque(maxlen=n)}
         return widget, trace, buf
+    
     def init_trial_info_panel(self):
         # per-trial inputs written to trials_metadata.csv when a take is saved ('C')
         box = QtWidgets.QGroupBox("Trial Info")
@@ -242,7 +243,9 @@ class sts_gui(pycorc_gui):
 
         self.knee_left_spin = spin(-30, 180, " deg")
         self.knee_right_spin = spin(-30, 180, " deg")
-        capture_btn = QtWidgets.QPushButton("Capture knee from Xsens (K)")
+        self.ankle_left_spin = spin(-90, 90, " deg")
+        self.ankle_right_spin = spin(-90, 90, " deg")
+        capture_btn = QtWidgets.QPushButton("Capture knee/ankle from Xsens (K)")
         capture_btn.setFocusPolicy(Qt.NoFocus)
         capture_btn.clicked.connect(self.capture_knee_angle)
 
@@ -253,6 +256,8 @@ class sts_gui(pycorc_gui):
         form.addRow(f"FP position ({self.foot_position or '-'})", self.fp_pos_spin)
         form.addRow("Initial knee L", self.knee_left_spin)
         form.addRow("Initial knee R", self.knee_right_spin)
+        form.addRow("Initial ankle L", self.ankle_left_spin)
+        form.addRow("Initial ankle R", self.ankle_right_spin)
         form.addRow(capture_btn)
         form.addRow("Notes", self.notes_edit)
         box.setFixedWidth(340)
@@ -272,20 +277,24 @@ class sts_gui(pycorc_gui):
             return {}
     def capture_knee_angle(self):
         if not hasattr(self, 'xsens_response'):
-            print("No Xsens data yet - cannot capture knee angle")
+            print("No Xsens data yet - cannot capture knee/ankle angle")
             return
         self.knee_left_spin.setValue(self.xsens_response["left"]["dict"]["knee_fe"])
         self.knee_right_spin.setValue(self.xsens_response["right"]["dict"]["knee_fe"])
+        self.ankle_left_spin.setValue(self.xsens_response["left"]["dict"]["ankle_fe"])
+        self.ankle_right_spin.setValue(self.xsens_response["right"]["dict"]["ankle_fe"])
     def get_trial_info(self):
         return {
             "fp_position_cm": self.fp_pos_spin.value(),
             "knee_init_left_deg": self.knee_left_spin.value(),
             "knee_init_right_deg": self.knee_right_spin.value(),
+            "ankle_init_left_deg": self.ankle_left_spin.value(),
+            "ankle_init_right_deg": self.ankle_right_spin.value(),
             "notes": self.notes_edit.text(),
         }
     def save_current_take(self):
         self.save_take.emit(self.get_trial_info())
-        self.notes_edit.clear()  # notes are per-trial; fp position/knee carry over to the next take
+        self.notes_edit.clear()  # notes are per-trial; fp position/knee/ankle carry over to the next take
     def init_logger(self):
         # init response label
         self.logger_label = self.init_response_label(size=[600,300],fontsize=50)
@@ -502,6 +511,11 @@ class sts_gui(pycorc_gui):
         if hasattr(self, 'logger_response'):
             print_text = self.logger_response["print_text"]
             self.update_response_label(self.logger_label,f"{print_text}")
+            # red label = Xsens stalled in this take or the one just saved (redo with R)
+            bg = "darkred" if self.logger_response.get("xsens_warning") else "black"
+            if bg != getattr(self, "logger_label_bg", "black"):
+                self.logger_label.setStyleSheet(f"background-color: {bg}; color: white;")
+                self.logger_label_bg = bg
 
         # replacing the base class's own single-source gui_label text written by super().update_gui() above
         fps_txt = f"GUI FPS: {self.gui_fps:.1f}   Elapsed: {self.gui_elapsed_time:.2f}s\n"
@@ -544,6 +558,8 @@ if __name__ == "__main__":
     try:
         argv = sys.argv[1]
     except:
+        # standalone run (no args from sts_exp1_driver): ask here, not at import
+        subject_id = input("subject id?: sub<>: ")
         argv ={
                "init_flags":{"corc":{"on":False,
                                      "ip":"127.0.0.1",
@@ -562,8 +578,8 @@ if __name__ == "__main__":
                              "log":{"on":True}
                              },
                 "session_data":{
-                    "exp_id":"exp2",
-                    "subject_id":"test_j",
+                    "exp_id":"mass_reading",
+                    "subject_id": subject_id,
                     "take_num":0,
                     "var_num":1,
                     "chair_height":"test",

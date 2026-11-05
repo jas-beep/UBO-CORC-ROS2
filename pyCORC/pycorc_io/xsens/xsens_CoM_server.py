@@ -1,4 +1,5 @@
 import socket
+import select
 import sys
 import pickle as pkl
 import os 
@@ -115,12 +116,24 @@ class xsens_server(QObject):
 
     def get_latest(self):
         try:
-            # read datagrams until one full frame (joint angles 20, linear segment kinematics 21, CoM 24, timecode 25) is collected
+            # a full frame = joint angles 20, linear segment kinematics 21, CoM 24, timecode 25.
+            
+            # NEW CHANGES below
+            # MVN keeps streaming while we aren't reading (between takes, GUI stalls), so frames
+            # queue up in the TCP buffer. Reading one frame per tick would replay that backlog
+            # (seen as 200-450 ms Xsens lag at take start), so drain everything already waiting
+            # and keep only the newest complete frame.
             needed = {b"20", b"21", b"24", b"25"}
             frame = {}
-            while not needed.issubset(frame):
+            while True:
                 msg_type, payload = self.recv_datagram()
                 frame[msg_type] = payload
+                if needed.issubset(frame):
+                    latest, frame = frame, {}
+                    # stop once nothing more is waiting in the socket buffer
+                    if not select.select([self.server_conn], [], [], 0)[0]:
+                        break
+            frame = latest
 
             # timecode string HH:MM:SS.mmm is the last 12 bytes of the payload
             timecode = f"{frame[b'25'][-12:].decode('utf-8', errors='replace')}\n"

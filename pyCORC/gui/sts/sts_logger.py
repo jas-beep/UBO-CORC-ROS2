@@ -29,6 +29,12 @@ class sts_logger(QObject):
                                      f"logs/pycorc_recordings/{self.exp_id}/{self.subject_id}/trials_metadata.csv")
 
         self.sensors_ready_flag = False
+
+        # Xsens stall check: excess lag = (logger time - Xsens sample time) above its lowest value
+        # this take. Clean takes stay under ~35 ms; MVN/network hiccups push it past 100 ms.
+        self.xsens_lag_warn_ms = 50
+        self.xsens_warning = ""  # set when a saved take stalled; cleared on the next save/redo
+        self.reset_xsens_lag_check()
         
         # FPS Calculator
         self.logger_frame_count = 0
@@ -50,8 +56,11 @@ class sts_logger(QObject):
         "chair_height": self.chair_height,
         "foot_position": self.foot_position,
         "fp_position_cm": trial_info.get("fp_position_cm", ""),
+        "xsens_excess_lag_ms": trial_info.get("xsens_excess_lag_ms", ""),
         "knee_init_left_deg": trial_info.get("knee_init_left_deg", ""),
         "knee_init_right_deg": trial_info.get("knee_init_right_deg", ""),
+        "ankle_init_left_deg": trial_info.get("ankle_init_left_deg", ""),
+        "ankle_init_right_deg": trial_info.get("ankle_init_right_deg", ""),
         "classification": "",   # based on UI condtional check?
         "notes": trial_info.get("notes", ""),
         }
@@ -109,6 +118,10 @@ class sts_logger(QObject):
             com_foot_x = [CoM[0]-self.xsens_response["right_foot"][0],
                           CoM[0]-self.xsens_response["left_foot"][0]]
             self.xsens_arr.append([timecode]+right+left+CoM+com_foot_x+[self.elapsed_time])
+            self.update_xsens_lag_check(timecode)
+            lag_ms = self.xsens_excess_lag_ms()
+            if lag_ms > self.xsens_lag_warn_ms:
+                print_text += f"XSENS LAG {lag_ms:.0f}ms!\n"
 
         if self.init_args.get("forceplate", {}).get("on", False) and hasattr(self, 'fp_response'):
             # log [fp_time, F_0..F_(n-1) (calibrated N per plate), CoPx_0,CoPy_0, ...] each tick
@@ -121,9 +134,12 @@ class sts_logger(QObject):
                 # no valid packet this tick (client emits empty lists): keep the row width fixed
                 self.fp_arr.append([np.nan]*(1+3*n))
                 
+        if self.xsens_warning:
+            print_text += self.xsens_warning
         # emit the signal
         data = {
             "print_text":print_text,
+            "xsens_warning":bool(self.xsens_warning) or self.xsens_excess_lag_ms() > self.xsens_lag_warn_ms,
             "logger_fps":self.logger_fps,
             "take_num":self.take_num
         }
@@ -138,13 +154,14 @@ class sts_logger(QObject):
             self.poll_timer = QTimer()
             self.poll_timer.setTimerType(Qt.PreciseTimer)
             self.poll_timer.timeout.connect(self.log_current_data)
-            self.poll_timer.start(int(1/60*1000))
+            self.poll_timer.start(int(1/100*1000))
             self.logger_start_time = self.logger_timer.elapsed()
     
             if self.init_args["corc"]["on"]:
                 self.corc_arr = []
             if self.init_args["xsens"]["on"]:
                 self.xsens_arr = []
+                self.reset_xsens_lag_check()
             if self.init_args.get("forceplate", {}).get("on", False):
                 self.fp_arr = []  # NEW: initialise forceplate buffer alongside xsens/corc
         else:
@@ -186,6 +203,8 @@ class sts_logger(QObject):
             self.corc_arr = []
         if self.init_args["xsens"]["on"]:
             self.xsens_arr = []
+            self.reset_xsens_lag_check()
+        self.xsens_warning = ""
         if self.init_args.get("forceplate", {}).get("on", False):
             self.fp_arr = []  # NEW: discard forceplate data for the redone take
         self.logger_start_time = self.logger_timer.elapsed()
@@ -224,6 +243,17 @@ class sts_logger(QObject):
             total_col += fp_column
             total_arr.append(self.fp_arr)
 
+        trial_info = dict(trial_info or {})
+        self.xsens_warning = ""
+        if hasattr(self, 'xsens_response'):
+            lag_ms = self.xsens_excess_lag_ms()
+            trial_info["xsens_excess_lag_ms"] = round(lag_ms)
+            if lag_ms > self.xsens_lag_warn_ms or self.xsens_error_rows:
+                self.xsens_warning = f"T{self.take_text} XSENS BAD: R\n"
+                print(f"WARNING: Take {self.take_text} Xsens stalled (excess lag {lag_ms:.0f} ms, "
+                      f"{self.xsens_error_rows} error rows) - press R to redo it")
+            self.reset_xsens_lag_check()
+
         df = pd.DataFrame(np.hstack(total_arr), columns=total_col)
         self.save_file(path=f"{self.save_path}/", df=df, item=f"STSRecord{self.take_text}Log")
         self.log_trial_metadata(self.take_text, trial_info)  # record this take + trial info panel in the sidecar
@@ -242,7 +272,27 @@ class sts_logger(QObject):
         
     """
     Helper Function
-    """    
+    """
+    def reset_xsens_lag_check(self):
+        self.xsens_min_lag = np.inf
+        self.xsens_max_lag = -np.inf
+        self.xsens_error_rows = 0
+    def update_xsens_lag_check(self, timecode):
+        # timecode is the Xsens sample time "HH:MM:SS.mmm"; "ERROR TIME"/"" mean no valid frame
+        try:
+            h, m, sec = timecode.strip().split(":")
+            sample_t = int(h)*3600 + int(m)*60 + float(sec)
+        except ValueError:
+            self.xsens_error_rows += 1
+            return
+        lag = self.logger_cur_time/1000 - sample_t
+        self.xsens_min_lag = min(self.xsens_min_lag, lag)
+        self.xsens_max_lag = max(self.xsens_max_lag, lag)
+    def xsens_excess_lag_ms(self):
+        if not np.isfinite(self.xsens_min_lag):
+            return 0.0
+        return (self.xsens_max_lag - self.xsens_min_lag)*1000
+
     def save_file(self,path,df:pd.DataFrame,item):
         if not os.path.isdir(path):
             os.makedirs(path)
