@@ -34,13 +34,15 @@ class speed_bar(QtWidgets.QWidget):
         super().__init__(parent)
         self.v_max = v_max                                                   # speed at which the bar is full (m/s)
         self.colour_stops = [(0.2, "#2ecc40"), (0.35, "#ffdc00"), (0.6, "#ff4136")]
-        self.tick_lines = [0.2, 0.3, 0.4, 0.6]                               # zone boundaries
-        self.tick_labels = [(0.2, "Low"), (0.35, "Medium"), (0.6, "High")]
+        self.tick_lines = [0.1, 0.35, 0.6]                               # zone boundaries
+        self.tick_labels = [(0.1, "Low"), (0.35, "Medium"), (0.6, "High")]
         self.value = 0.0
+        self.max_tick = 0.0
         self.setMinimumSize(400, 120)
 
     def set_value(self, v):
-        self.value = abs(float(v))
+        self.value = max(float(v), 0.0) #clamp negative to 0
+        self.max_tick = max(self.max_tick, self.value)
         self.update()  # schedule repaint
 
     def paintEvent(self, event):
@@ -71,6 +73,12 @@ class speed_bar(QtWidgets.QWidget):
         p.setPen(QPen(Qt.black))
         for v, name in self.tick_labels:
             p.drawText(QRectF(x_of(v) - 60, bar.bottom() + 4, 120, label_h), Qt.AlignHCenter | Qt.AlignTop, name)
+
+        #set tick at max velocity of participant
+        if self.max_tick > 0:
+            p.setPen(QPen(Qt.red, 3))
+            x = x_of(self.max_tick)
+            p.drawLine(QPointF(x, bar.top()), QPointF(x, bar.bottom()))
 
         # outline + numeric readout
         p.setPen(QPen(Qt.black, 2))
@@ -236,16 +244,13 @@ class sts_gui(pycorc_gui):
             s.editingFinished.connect(self.return_focus)
             return s
 
-        # forceplate cm shift for this run's foot position, prefilled from earlier runs of this subject
-        self.foot_position = self.session_data.get("foot_position", "")
-        fp_positions = self.load_fp_positions()
-        self.fp_pos_spin = spin(-100, 100, " cm", float(fp_positions.get(self.foot_position, 0)))
-
+        self.hip_left_spin = spin(-30, 180, " deg")
+        self.hip_right_spin = spin(-30, 180, " deg")
         self.knee_left_spin = spin(-30, 180, " deg")
         self.knee_right_spin = spin(-30, 180, " deg")
         self.ankle_left_spin = spin(-90, 90, " deg")
         self.ankle_right_spin = spin(-90, 90, " deg")
-        capture_btn = QtWidgets.QPushButton("Capture knee/ankle from Xsens (K)")
+        capture_btn = QtWidgets.QPushButton("Capture hip/knee/ankle from Xsens (K)")
         capture_btn.setFocusPolicy(Qt.NoFocus)
         capture_btn.clicked.connect(self.capture_knee_angle)
 
@@ -253,7 +258,8 @@ class sts_gui(pycorc_gui):
         self.notes_edit.setPlaceholderText("Notes for this trial (Enter to finish)")
         self.notes_edit.returnPressed.connect(self.return_focus)
 
-        form.addRow(f"FP position ({self.foot_position or '-'})", self.fp_pos_spin)
+        form.addRow("Initial hip L", self.hip_left_spin)
+        form.addRow("Initial hip R", self.hip_right_spin)
         form.addRow("Initial knee L", self.knee_left_spin)
         form.addRow("Initial knee R", self.knee_right_spin)
         form.addRow("Initial ankle L", self.ankle_left_spin)
@@ -277,15 +283,18 @@ class sts_gui(pycorc_gui):
             return {}
     def capture_knee_angle(self):
         if not hasattr(self, 'xsens_response'):
-            print("No Xsens data yet - cannot capture knee/ankle angle")
+            print("No Xsens data yet - cannot capture hip/knee/ankle angle")
             return
+        self.hip_left_spin.setValue(self.xsens_response["left"]["dict"]["hip_fe"])
+        self.hip_right_spin.setValue(self.xsens_response["right"]["dict"]["hip_fe"])
         self.knee_left_spin.setValue(self.xsens_response["left"]["dict"]["knee_fe"])
         self.knee_right_spin.setValue(self.xsens_response["right"]["dict"]["knee_fe"])
         self.ankle_left_spin.setValue(self.xsens_response["left"]["dict"]["ankle_fe"])
         self.ankle_right_spin.setValue(self.xsens_response["right"]["dict"]["ankle_fe"])
     def get_trial_info(self):
         return {
-            "fp_position_cm": self.fp_pos_spin.value(),
+            "hip_init_left_deg": self.hip_left_spin.value(),
+            "hip_init_right_deg": self.hip_right_spin.value(),
             "knee_init_left_deg": self.knee_left_spin.value(),
             "knee_init_right_deg": self.knee_right_spin.value(),
             "ankle_init_left_deg": self.ankle_left_spin.value(),
@@ -294,7 +303,7 @@ class sts_gui(pycorc_gui):
         }
     def save_current_take(self):
         self.save_take.emit(self.get_trial_info())
-        self.notes_edit.clear()  # notes are per-trial; fp position/knee/ankle carry over to the next take
+        self.notes_edit.clear()  # notes are per-trial; hip/knee/ankle carry over to the next take
     def init_logger(self):
         # init response label
         self.logger_label = self.init_response_label(size=[600,300],fontsize=50)
@@ -476,22 +485,23 @@ class sts_gui(pycorc_gui):
                 
             txt = f"XSENS Timecode:{timecode}\n"
 
-            for i,key in  enumerate(['trunk_ie','trunk_aa','trunk_fe',
-                        'hip_fe','hip_aa','hip_ie',
-                        'knee_fe','knee_aa', 'knee_ie',
-                        'ankle_fe','ankle_aa','ankle_ie']):
-                txt += f"{key:15}: {left_list[i]:8.4f} {right_list[i]:8.4f}\n"
+            # only lower-limb joints are shown so participants can adjust their posture
+            # (all joints are still logged from self.xsens_response["joints"])
+            right = self.xsens_response["right"]["dict"]
+            left = self.xsens_response["left"]["dict"]
+            txt += f"{'':15}  {'L':>8} {'R':>8}\n"
+            for key in ['hip_fe','hip_aa','hip_ie',
+                        'knee_fe','knee_aa','knee_ie',
+                        'ankle_fe','ankle_aa','ankle_ie']:
+                txt += f"{key:15}: {left[key]:8.4f} {right[key]:8.4f}\n"
             txt += f"CoM Position\t: {CoM[0:3]}\n"
             txt += f"CoM Velocity\t: {CoM[3:6]}\n"
             self.update_response_label(self.xsens_label,f"{txt}")
 
-            # large readout: knee & ankle flexion and 
-            knee_right = self.xsens_response["right"]["dict"]["knee_fe"]
-            knee_left = self.xsens_response["left"]["dict"]["knee_fe"]
-            ankle_right = self.xsens_response["right"]["dict"]["ankle_fe"]
-            ankle_left = self.xsens_response["left"]["dict"]["ankle_fe"]
-            big_txt = f"Knee  L:{knee_left:6.1f} R:{knee_right:6.1f}\n"
-            big_txt += f"Ankle L:{ankle_left:6.1f} R:{ankle_right:6.1f}\n"
+            # large readout: hip, knee & ankle flexion
+            big_txt = f"Hip   L:{left['hip_fe']:6.1f} R:{right['hip_fe']:6.1f}\n"
+            big_txt += f"Knee  L:{left['knee_fe']:6.1f} R:{right['knee_fe']:6.1f}\n"
+            big_txt += f"Ankle L:{left['ankle_fe']:6.1f} R:{right['ankle_fe']:6.1f}\n"
             self.update_response_label(self.knee_com_label,big_txt)
 
         if hasattr(self, 'fp_response'):
@@ -578,7 +588,7 @@ if __name__ == "__main__":
                              "log":{"on":True}
                              },
                 "session_data":{
-                    "exp_id":"mass_reading",
+                    "exp_id":"mass_reading_lag",
                     "subject_id": subject_id,
                     "take_num":0,
                     "var_num":1,

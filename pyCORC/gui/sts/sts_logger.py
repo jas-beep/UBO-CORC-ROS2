@@ -36,7 +36,13 @@ class sts_logger(QObject):
         self.xsens_lag_warn_ms = 50
         self.xsens_warning = ""  # set when a saved take stalled; cleared on the next save/redo
         self.reset_xsens_lag_check()
-        
+
+        # Foot event check: heel (foot segment origin = ankle) and toe (ball of foot) position relative to
+        # the start of the take. Planted feet stay within a few mm, so only larger movements are logged.
+        self.foot_lift_warn_mm = 15     # vertical rise
+        self.foot_shift_warn_mm = 20    # horizontal slide
+        self.foot_ref_rows = 50         # first 0.5 s of the take (100 Hz) is the planted reference
+
         # FPS Calculator
         self.logger_frame_count = 0
         self.logger_fps = 0
@@ -56,12 +62,15 @@ class sts_logger(QObject):
         "take": take_text,
         "chair_height": self.chair_height,
         "foot_position": self.foot_position,
-        "fp_position_cm": trial_info.get("fp_position_cm", ""),
         "xsens_excess_lag_ms": trial_info.get("xsens_excess_lag_ms", ""),
+        "hip_init_left_deg": trial_info.get("hip_init_left_deg", ""),
+        "hip_init_right_deg": trial_info.get("hip_init_right_deg", ""),
         "knee_init_left_deg": trial_info.get("knee_init_left_deg", ""),
         "knee_init_right_deg": trial_info.get("knee_init_right_deg", ""),
         "ankle_init_left_deg": trial_info.get("ankle_init_left_deg", ""),
         "ankle_init_right_deg": trial_info.get("ankle_init_right_deg", ""),
+        # max heel/toe lift and shift this take, only filled in when above the warn thresholds (see foot_events)
+        **{col: trial_info.get(col, "") for col in self.foot_event_columns()},
         "classification": "",   # based on UI condtional check?
         "notes": trial_info.get("notes", ""),
         }
@@ -261,6 +270,12 @@ class sts_logger(QObject):
 
         df = pd.DataFrame(np.hstack(total_arr), columns=total_col)
         self.save_file(path=f"{self.save_path}/", df=df, item=f"STSRecord{self.take_text}Log")
+        if hasattr(self, 'xsens_response'):
+            foot_events = self.foot_events(df)
+            trial_info.update(foot_events)
+            if foot_events:
+                print(f"NOTE: Take {self.take_text} foot movement: "
+                      + ", ".join(f"{k.replace('_mm','')} {v} mm" for k, v in foot_events.items()))
         self.log_trial_metadata(self.take_text, trial_info)  # record this take + trial info panel in the sidecar
 
         # reset everything
@@ -297,6 +312,32 @@ class sts_logger(QObject):
         if not np.isfinite(self.xsens_min_lag):
             return 0.0
         return (self.xsens_max_lag - self.xsens_min_lag)*1000
+
+    def foot_event_columns(self):
+        return [f"{part}_{kind}_{side}_mm" for part in ["heel","toe"] for kind in ["lift","shift"] for side in ["right","left"]]
+    def foot_events(self, df):
+        # max lift (z rise) and shift (horizontal distance) of each heel/toe from its position at the
+        # start of the take, in mm; returns only the ones above the warn thresholds
+        timecode = df["timecode"].astype(str)
+        valid = ~timecode.str.contains("ERROR") & (timecode.str.strip() != "")  # skip placeholder rows
+        if valid.sum() < self.foot_ref_rows:
+            return {}
+        events = {}
+        # heel = foot segment (origin at ankle), toe = toe segment (origin at ball of foot)
+        for part, segment in [("heel","Foot"), ("toe","Toe")]:
+            for side in ["right","left"]:
+                cols = [f"{side.capitalize()}{segment}_{k}" for k in ["x","y","z"]]
+                pos = df.loc[valid, cols].astype(float).to_numpy()
+                ref = np.nanmedian(pos[:self.foot_ref_rows], axis=0)
+                if np.isnan(ref).any():
+                    continue
+                lift = np.nanmax(pos[:,2] - ref[2])*1000
+                shift = np.nanmax(np.linalg.norm(pos[:,0:2] - ref[0:2], axis=1))*1000
+                if lift > self.foot_lift_warn_mm:
+                    events[f"{part}_lift_{side}_mm"] = round(lift)
+                if shift > self.foot_shift_warn_mm:
+                    events[f"{part}_shift_{side}_mm"] = round(shift)
+        return events
 
     def save_file(self,path,df:pd.DataFrame,item):
         if not os.path.isdir(path):
