@@ -66,6 +66,8 @@ class xsens_server(QObject):
         self.CoM = []
         self.right_foot = []
         self.left_foot = []
+        self.segments = [np.nan]*len(SEGMENT_KIN_COLUMNS)
+        self.joints = [np.nan]*len(JOINT_ANGLE_COLUMNS)
         self.timecode = ""
 
     """
@@ -139,8 +141,12 @@ class xsens_server(QObject):
             timecode = f"{frame[b'25'][-12:].decode('utf-8', errors='replace')}\n"
             CoM = parse_COM_kinematics(frame[b"24"])
             right,left = parse_LL_joint_angle(frame[b"20"])
-            right_foot,left_foot = parse_foot_kinematics(frame[b"21"])
+            segments = parse_segment_kinematics(frame[b"21"])  # (23, 9), parsed once
+            right_foot = segments[SEGMENT_RIGHT_FOOT].tolist()
+            left_foot = segments[SEGMENT_LEFT_FOOT].tolist()
 
+            self.segments = segments.ravel().tolist()  # flat, matches SEGMENT_KIN_COLUMNS
+            self.joints = parse_all_joint_angles(frame[b"20"]).ravel().tolist()  # flat, matches JOINT_ANGLE_COLUMNS
             self.right=right
             self.left=left
             self.right_foot=right_foot
@@ -157,6 +163,8 @@ class xsens_server(QObject):
             self.CoM = [0,0,0,0,0,0,0,0,0]
             self.right_foot = [0,0,0,0,0,0,0,0,0]
             self.left_foot = [0,0,0,0,0,0,0,0,0]
+            self.segments = [np.nan]*len(SEGMENT_KIN_COLUMNS)
+            self.joints = [np.nan]*len(JOINT_ANGLE_COLUMNS)
             self.timecode = "ERROR TIME"
 
 
@@ -178,7 +186,9 @@ class xsens_server(QObject):
                 "left":self.left,
                 "CoM":self.CoM,
                 "right_foot":self.right_foot,
-                "left_foot":self.left_foot
+                "left_foot":self.left_foot,
+                "segments":self.segments,
+                "joints":self.joints
             }
         else:
             data = {
@@ -188,7 +198,9 @@ class xsens_server(QObject):
                 "left":self.left,
                 "CoM":self.CoM,
                 "right_foot":self.right_foot,
-                "left_foot":self.left_foot
+                "left_foot":self.left_foot,
+                "segments":self.segments,
+                "joints":self.joints
             }
         self.data_ready.emit(data)
 

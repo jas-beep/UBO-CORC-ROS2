@@ -5,6 +5,7 @@ import pandas as pd
 
 from pycorc_io.package_utils.unpack_json import get_subject_params
 from pycorc_io.xsens.ub_pckg.ub import ub
+from pycorc_io.xsens.xsens_tools import SEGMENT_KIN_COLUMNS, JOINT_ANGLE_COLUMNS
 from PySide6.QtCore import QObject, Signal,QTimer,Slot,QElapsedTimer,Qt
 
 class sts_logger(QObject):
@@ -117,7 +118,11 @@ class sts_logger(QObject):
             # relative x distance between CoM and foot (CoM x - foot x)
             com_foot_x = [CoM[0]-self.xsens_response["right_foot"][0],
                           CoM[0]-self.xsens_response["left_foot"][0]]
-            self.xsens_arr.append([timecode]+right+left+CoM+com_foot_x+[self.elapsed_time])
+            # all 23 segments x [x,y,z,vx,vy,vz,ax,ay,az] (global, Z-up) for foot-shift / hip-lift detection
+            segments = self.xsens_response.get("segments") or [np.nan]*len(SEGMENT_KIN_COLUMNS)
+            # all 28 MVN joints (22 body + 6 ergonomic) x [x,y,z] in deg
+            joints_all = self.xsens_response.get("joints") or [np.nan]*len(JOINT_ANGLE_COLUMNS)
+            self.xsens_arr.append([timecode]+right+left+CoM+com_foot_x+[self.elapsed_time]+joints_all+segments)
             self.update_xsens_lag_check(timecode)
             lag_ms = self.xsens_excess_lag_ms()
             if lag_ms > self.xsens_lag_warn_ms:
@@ -232,7 +237,7 @@ class sts_logger(QObject):
                       'hip_fe','hip_aa','hip_ie',
                       'knee_fe','knee_aa','knee_ie',
                       'ankle_fe','ankle_aa','ankle_ie']
-            xsens_column = ["timecode"]+[f"{joint}_{side}" for side in ["right","left"] for joint in joints]+["x","y","z","dx","dy","dz","com_foot_x_right","com_foot_x_left","elapsed_time"]
+            xsens_column = ["timecode"]+[f"{joint}_{side}" for side in ["right","left"] for joint in joints]+["x","y","z","dx","dy","dz","com_foot_x_right","com_foot_x_left","elapsed_time"]+JOINT_ANGLE_COLUMNS+SEGMENT_KIN_COLUMNS
             total_col += xsens_column
             total_arr.append(self.xsens_arr)
         if hasattr(self, 'fp_response'):

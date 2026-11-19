@@ -17,23 +17,55 @@ def parse_string(message:bytes):
 def parse_COM_kinematics(message:bytes):
     COM_kinematics = np.frombuffer(message, dtype='>f4').tolist()
     return COM_kinematics
-def parse_foot_kinematics(message: bytes):
+# MVN body segments in stream order (index = position in the type-21 packet)
+SEGMENT_NAMES = ['Pelvis','L5','L3','T12','T8','Neck','Head',
+                 'RightShoulder','RightUpperArm','RightForeArm','RightHand',
+                 'LeftShoulder','LeftUpperArm','LeftForeArm','LeftHand',
+                 'RightUpperLeg','RightLowerLeg','RightFoot','RightToe',
+                 'LeftUpperLeg','LeftLowerLeg','LeftFoot','LeftToe']
+SEGMENT_FIELDS = ['x','y','z','vx','vy','vz','ax','ay','az']
+SEGMENT_RIGHT_FOOT = 17
+SEGMENT_LEFT_FOOT = 21
+SEGMENT_KIN_COLUMNS = [f"{seg}_{f}" for seg in SEGMENT_NAMES for f in SEGMENT_FIELDS]
+
+def parse_segment_kinematics(message: bytes):
     # Linear segment kinematics (type 21): 40 bytes per segment
     # [segment ID, x, y, z, vx, vy, vz, ax, ay, az], global, Z-Up
-    SEGMENT_RIGHT_FOOT = 17
-    SEGMENT_LEFT_FOOT = 21
+    # returns a (23, 9) float array
+    # missing ones are NaN so the logged row width never changes
+    n = len(SEGMENT_NAMES)
+    raw = np.frombuffer(message, dtype='>f4', count=(len(message)//40)*10).reshape(-1, 10)[:n, 1:]
+    if raw.shape[0] < n:
+        raw = np.vstack([raw, np.full((n-raw.shape[0], 9), np.nan)])
+    return raw.astype(np.float64)
 
-    segments_list = [SEGMENT_RIGHT_FOOT, SEGMENT_LEFT_FOOT]
-    packet_size = 40
-    base_offsets = np.array(segments_list) * packet_size
+def parse_foot_kinematics(message: bytes):
+    # kept for callers that only need the feet: [x,y,z,vx,vy,vz,ax,ay,az] each
+    values = parse_segment_kinematics(message)
+    return values[SEGMENT_RIGHT_FOOT].tolist(), values[SEGMENT_LEFT_FOOT].tolist()
+# MVN joints in stream order (index = position in the type-20 packet): 22 body joints + 6 ergonomic
+JOINT_NAMES = ['jL5S1','jL4L3','jL1T12','jT9T8','jT1C7','jC1Head',
+               'jRightT4Shoulder','jRightShoulder','jRightElbow','jRightWrist',
+               'jLeftT4Shoulder','jLeftShoulder','jLeftElbow','jLeftWrist',
+               'jRightHip','jRightKnee','jRightAnkle','jRightBallFoot',
+               'jLeftHip','jLeftKnee','jLeftAnkle','jLeftBallFoot',
+               'T8_Head','T8_LeftUpperArm','T8_RightUpperArm',
+               'Pelvis_T8','Vertical_Pelvis','Vertical_T8']
+# raw MVN axes (deg), same as an MVN export: for most joints x = abd/add (lateral bend),
+# y = int/ext (axial) rotation, z = flex/ext; shoulders use a different Euler order
+JOINT_FIELDS = ['x','y','z']
+JOINT_ANGLE_COLUMNS = [f"{j}_{f}" for j in JOINT_NAMES for f in JOINT_FIELDS]
 
-    # position (x,y,z), velocity (vx,vy,vz), acceleration (ax,ay,az)
-    values = [convert_4_bytes(message=message,base_offsets=base_offsets,add_offsets=4*i,dtype='>f4') for i in range(1,10)]
-    values = np.stack(values, axis=1) # rows: segment, cols: x,y,z,vx,vy,vz,ax,ay,az
+def parse_all_joint_angles(message: bytes):
+    # Joint angles (type 20): 20 bytes per joint
+    # [parent connection ID, child connection ID, x, y, z]
+    # returns a (28, 3) float array; missing joints are NaN so the logged row width never changes
+    n = len(JOINT_NAMES)
+    raw = np.frombuffer(message, dtype='>f4', count=(len(message)//20)*5).reshape(-1, 5)[:n, 2:]
+    if raw.shape[0] < n:
+        raw = np.vstack([raw, np.full((n-raw.shape[0], 3), np.nan)])
+    return raw.astype(np.float64)
 
-    right_foot = values[0].tolist()
-    left_foot = values[1].tolist()
-    return right_foot, left_foot
 def parse_LL_joint_angle(message: bytes):
     # Compute starting offsets for each joint
     JOINT_RIGHT_HIP = 14
